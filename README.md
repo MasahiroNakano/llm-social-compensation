@@ -137,7 +137,8 @@ chat template because this first test only needs to verify ordinary chat
 generation. The reasoning and experiment runners use the same checkpoint's
 default thinking mode. The official model card reports a 4B language model and
 requires a recent Transformers release; the repository pins the compatible
-Transformers 5.x major series.
+Transformers 5.x releases below 5.15 so it remains compatible with PyTorch 2.4
+in the RunPod image.
 
 ## Interactive chat and reusable results
 

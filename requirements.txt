@@ -1,6 +1,8 @@
 # PyTorch is intentionally omitted.
 # Run this repository inside a RunPod PyTorch pod so the CUDA-enabled
 # PyTorch build supplied by the pod remains untouched.
-transformers>=5.3.0,<6.0.0
+# Qwen3.5 requires Transformers 5.3+. Transformers 5.15+ requires
+# PyTorch 2.5+, while the RunPod image used by this project supplies 2.4.1.
+transformers>=5.3.0,<5.15.0
 accelerate>=1.0.0,<2.0.0
 tqdm>=4.66.0,<5.0.0

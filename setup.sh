@@ -70,11 +70,25 @@ import accelerate
 import torch
 import tqdm
 import transformers
+from transformers.utils import is_torch_available
 
 print(f"transformers: {transformers.__version__}")
 print(f"accelerate:   {accelerate.__version__}")
 print(f"tqdm:         {tqdm.__version__}")
 print(f"torch:        {torch.__version__}")
+
+if not is_torch_available():
+    raise SystemExit(
+        "Transformers disabled its PyTorch backend because the installed "
+        "versions are incompatible. Check requirements.txt and rerun setup.sh."
+    )
+
+from transformers import AutoModelForCausalLM  # noqa: E402
+
+if AutoModelForCausalLM is None:
+    raise SystemExit("Transformers did not expose AutoModelForCausalLM.")
+
+print("transformers PyTorch backend: available")
 PY
 
 echo
