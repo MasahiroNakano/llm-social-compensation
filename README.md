@@ -19,7 +19,9 @@ analysis code will be added after this basic GPU/model setup is confirmed.
 ├── .gitignore
 ├── PROJECT_PLAN.md
 ├── README.md
+├── chat_qwen.py
 ├── hello_qwen.py
+├── hello_qwen_reasoning.py
 ├── requirements.txt
 └── setup.sh
 ```
@@ -29,6 +31,10 @@ analysis code will be added after this basic GPU/model setup is confirmed.
 - `hello_qwen.py` downloads and runs
   [`Qwen/Qwen3-4B-Instruct-2507`](https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507)
   by default.
+- `hello_qwen_reasoning.py` runs one prompt with the Qwen thinking checkpoint
+  and separates the model-emitted reasoning from its final answer.
+- `chat_qwen.py` provides a reusable Python interface and an interactive,
+  multi-turn chat with optional reasoning display.
 - `requirements.txt` intentionally contains no `torch` dependency.
 - `PROJECT_PLAN.md` is the supplied research plan, unchanged.
 
@@ -121,6 +127,41 @@ reasoning-capable checkpoint can be used in later experiments.
 The official model card reports 4.0B parameters and requires
 `transformers>=4.51.0`; the repository pins the compatible Transformers 4.x
 major series for a conservative first setup.
+
+## Interactive chat and reusable results
+
+Start a normal multi-turn chat with the reasoning-capable checkpoint:
+
+```bash
+python3 chat_qwen.py
+```
+
+Within the chat, use `/reasoning on` or `/reasoning off` to choose whether the
+trace is displayed. `/show` reprints the last result with the current display
+setting without generating it again. `/clear` clears the conversation and
+`/quit` exits.
+
+In a Python session or notebook, generation and printing are separate:
+
+```python
+from chat_qwen import LLM, print_result
+
+output = LLM("Why do control experiments matter?")
+
+print_result(output)                       # final response only
+print_result(output, show_reasoning=True)  # reasoning and final response
+```
+
+Calling `output = LLM()` with no prompt asks for one interactively. The same
+`output` can be passed to `print_result` any number of times without rerunning
+the model. Its `response`, `reasoning`, and `raw_response` fields can also be
+accessed directly.
+
+For one terminal prompt, use:
+
+```bash
+python3 chat_qwen.py --prompt "What is activation steering?" --show-reasoning
+```
 
 ## Model cache on RunPod
 
