@@ -37,7 +37,7 @@ ROOT_DIR = Path(__file__).resolve().parent
 DEFAULT_SOURCE_JSONL = (
     ROOT_DIR
     / "outputs"
-    / "qwen35_criticism_baseline_mid.jsonl"
+    / "qwen35_criticism_baseline_selection.jsonl"
 )
 
 
