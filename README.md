@@ -23,6 +23,7 @@ analysis code will be added after this basic GPU/model setup is confirmed.
 ├── chat_qwen.py
 ├── hello_qwen.py
 ├── hello_qwen_reasoning.py
+├── jsonl_to_markdown.py
 ├── prompts/
 │   └── criticism_baseline.json
 ├── requirements.txt
@@ -41,6 +42,8 @@ analysis code will be added after this basic GPU/model setup is confirmed.
 - `batch_qwen.py` runs the structured criticism-baseline prompt set in manual
   PyTorch/Transformers mini-batches and samples 16 responses per prompt by
   default.
+- `jsonl_to_markdown.py` converts batch JSONL results into readable Markdown,
+  with responses shown directly and reasoning traces in collapsible sections.
 - `prompts/criticism_baseline.json` stores the 18 proposals and the two prompt
   endings separately so the experimental manipulation is explicit.
 - `requirements.txt` intentionally contains no `torch` dependency.
@@ -250,6 +253,26 @@ python3 batch_qwen.py \
   --max-new-tokens 512 \
   --output outputs/criticism_smoke_test.jsonl
 ```
+
+## Convert batch output to Markdown
+
+Convert one JSONL file to a same-named Markdown file beside it:
+
+```bash
+python3 jsonl_to_markdown.py outputs/criticism_natural.jsonl
+```
+
+Convert every JSONL file under `outputs/`, replacing any existing Markdown
+renderings:
+
+```bash
+python3 jsonl_to_markdown.py outputs/*.jsonl --force
+```
+
+Use `--output PATH` to name the result for one input, or `--output-dir DIR` to
+put results for one or more inputs in another directory. By default, redundant
+`raw_response` values are omitted because the parsed reasoning and response are
+already shown. Pass `--include-raw` to retain them as collapsible sections too.
 
 ## Model cache on RunPod
 
