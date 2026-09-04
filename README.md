@@ -19,9 +19,12 @@ analysis code will be added after this basic GPU/model setup is confirmed.
 ├── .gitignore
 ├── PROJECT_PLAN.md
 ├── README.md
+├── batch_qwen.py
 ├── chat_qwen.py
 ├── hello_qwen.py
 ├── hello_qwen_reasoning.py
+├── prompts/
+│   └── criticism_baseline.json
 ├── requirements.txt
 └── setup.sh
 ```
@@ -35,6 +38,10 @@ analysis code will be added after this basic GPU/model setup is confirmed.
   and separates the model-emitted reasoning from its final answer.
 - `chat_qwen.py` provides a reusable Python interface and an interactive,
   multi-turn chat with optional reasoning display.
+- `batch_qwen.py` runs the structured criticism-baseline prompt set through
+  vLLM and samples 16 responses per prompt by default.
+- `prompts/criticism_baseline.json` stores the 18 proposals and the two prompt
+  endings separately so the experimental manipulation is explicit.
 - `requirements.txt` intentionally contains no `torch` dependency.
 - `PROJECT_PLAN.md` is the supplied research plan, unchanged.
 
@@ -177,6 +184,43 @@ For one terminal prompt, use:
 
 ```bash
 python3 chat_qwen.py --prompt "What is activation steering?" --show-reasoning
+```
+
+## Criticism-baseline batch
+
+Install vLLM in the RunPod environment, then generate 16 stochastic samples
+for each of the 18 natural-condition prompts (288 generations):
+
+```bash
+python3 -m pip install vllm
+python3 batch_qwen.py
+```
+
+The runner gives all prompt-condition pairs to one dynamically batched vLLM
+call. It writes one self-contained JSON object per sample to a timestamped file
+under `outputs/`. Each record includes the prompt metadata, exact user prompt,
+response, any model-emitted reasoning, and all generation settings.
+
+Run both prompt endings for 576 total generations with:
+
+```bash
+python3 batch_qwen.py --condition both
+```
+
+Validate the dataset and preview the first prompt without loading a model:
+
+```bash
+python3 batch_qwen.py --dry-run
+```
+
+For a minimal GPU smoke test:
+
+```bash
+python3 batch_qwen.py \
+  --prompt-id L4_13 \
+  --samples-per-prompt 1 \
+  --max-new-tokens 512 \
+  --output outputs/criticism_smoke_test.jsonl
 ```
 
 ## Model cache on RunPod
