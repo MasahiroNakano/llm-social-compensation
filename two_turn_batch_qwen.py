@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""Sample fixed follow-ups after a set of saved first-turn Qwen responses."""
-
-"""L3 11 to L3 09 """
+"""Sample fixed follow-ups after a set of saved first-turn Qwen responses. L3 11 to L3 09"""
 
 from __future__ import annotations
 
