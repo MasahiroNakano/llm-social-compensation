@@ -136,10 +136,12 @@ Start a normal multi-turn chat with the reasoning-capable checkpoint:
 python3 chat_qwen.py
 ```
 
-Within the chat, use `/reasoning on` or `/reasoning off` to choose whether the
-trace is displayed. `/show` reprints the last result with the current display
-setting without generating it again. `/clear` clears the conversation and
-`/quit` exits.
+Interactive input is multiline. Press Enter to add another line, then enter
+`/send` on its own line to submit the entire message as one user turn. Before
+typing message text, use `/reasoning on` or `/reasoning off` to choose whether
+the trace is displayed. `/show` reprints the last result with the current
+display setting without generating it again, `/clear` clears the conversation,
+and `/quit` exits. `/cancel` discards a draft being composed.
 
 Each invocation creates one timestamped Markdown transcript under `outputs/`.
 User messages are right-aligned, assistant messages are left-aligned, and

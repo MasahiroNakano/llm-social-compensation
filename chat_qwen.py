@@ -560,6 +560,55 @@ def print_result(
             print(f"Throughput:       {throughput:.2f} tokens/s", file=destination)
 
 
+def _read_multiline_prompt(transcript: TextIO | None) -> str | None:
+    """Collect one chat turn until the user enters ``/send`` on its own line."""
+
+    command_names = {
+        "/clear",
+        "/exit",
+        "/quit",
+        "/reasoning off",
+        "/reasoning on",
+        "/show",
+    }
+    lines: list[str] = []
+    print("\nCompose your message. Enter /send on a new line when it is ready.")
+
+    while True:
+        try:
+            line = input("│ ")
+        except (EOFError, KeyboardInterrupt):
+            if lines:
+                print("\nDraft discarded.")
+                if transcript is not None:
+                    _write_system_message(
+                        transcript, "Unsubmitted multiline draft discarded."
+                    )
+            return None
+
+        command = line.strip().lower()
+        has_message_text = any(existing.strip() for existing in lines)
+        if not has_message_text and command in command_names:
+            return command
+        if command == "/cancel":
+            print("Draft discarded.")
+            if transcript is not None:
+                _write_system_message(transcript, "Multiline draft discarded.")
+            return ""
+        if command == "/send":
+            message = "\n".join(lines).strip()
+            if message:
+                return message
+            print("The message is empty. Type some text, then enter /send.")
+            if transcript is not None:
+                _write_system_message(
+                    transcript, "Empty message was not submitted."
+                )
+            lines.clear()
+            continue
+        lines.append(line)
+
+
 def chat(
     *,
     model_name: str = DEFAULT_MODEL,
@@ -581,26 +630,26 @@ def chat(
     history: list[dict[str, str]] = []
     last_output: LLMOutput | None = None
     print(
-        "Type anything to chat. Commands: /reasoning on, /reasoning off, "
-        "/show, /clear, /quit"
+        "Type a multiline message, then enter /send on its own line. "
+        "Commands before message text: /reasoning on, /reasoning off, "
+        "/show, /clear, /quit. Use /cancel to discard a draft."
     )
     if transcript is not None:
         _write_system_message(
             transcript,
-            "Interactive chat started. Commands: /reasoning on, "
-            "/reasoning off, /show, /clear, /quit",
+            "Interactive multiline chat started. Enter /send on its own line "
+            "to submit. Commands before message text: /reasoning on, "
+            "/reasoning off, /show, /clear, /quit. Use /cancel to discard a draft.",
         )
 
     while True:
-        try:
-            raw_prompt = input("\nYou: ")
-            prompt = raw_prompt.strip()
-        except (EOFError, KeyboardInterrupt):
+        raw_prompt = _read_multiline_prompt(transcript)
+        if raw_prompt is None:
             print("\nGoodbye.")
             if transcript is not None:
                 _write_system_message(transcript, "Chat ended by the user.")
             return
-
+        prompt = raw_prompt.strip()
         command = prompt.lower()
         if not prompt:
             continue
