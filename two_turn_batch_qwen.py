@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Sample fixed follow-ups after a set of saved first-turn Qwen responses."""
 
+"""L3 11 to L3 09 """
+
 from __future__ import annotations
 
 import argparse
@@ -37,7 +39,7 @@ ROOT_DIR = Path(__file__).resolve().parent
 DEFAULT_SOURCE_JSONL = (
     ROOT_DIR
     / "outputs"
-    / "criticism_baseline_2026-09-04_14-42-59_783609.jsonl"
+    / "qwen35_criticism_baseline_mid.jsonl"
 )
 
 
