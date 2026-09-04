@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from batch_qwen import (
-    DEFAULT_PROMPTS,
     batch_ranges,
     build_requests,
     eos_token_ids,
@@ -34,6 +33,7 @@ from two_turn_qwen import (
 
 
 ROOT_DIR = Path(__file__).resolve().parent
+DEFAULT_PROMPTS = ROOT_DIR / "prompts" / "criticism_baseline_selection.json"
 DEFAULT_SOURCE_JSONL = (
     ROOT_DIR
     / "outputs"
