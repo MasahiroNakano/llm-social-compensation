@@ -1,22 +1,27 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd "$(dirname "$0")"
+cd /workspace/llm-social-compensation
 
 if ! command -v uv >/dev/null 2>&1; then
     curl -LsSf https://astral.sh/uv/install.sh | sh
     export PATH="$HOME/.local/bin:$PATH"
 fi
 
-if [ ! -f pyproject.toml ]; then
-    uv init
-fi
+cat > pyproject.toml <<'TOML'
+[project]
+name = "llm-social-compensation"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "transformers>=5.16.1",
+    "safetensors",
+]
 
-uv add transformers accelerate safetensors
-uv add --dev ruff
-uv add torch --index https://download.pytorch.org/whl/cu128
-
-cat >> pyproject.toml <<'TOML'
+[dependency-groups]
+dev = [
+    "ruff",
+]
 
 [tool.ruff]
 line-length = 100
@@ -25,28 +30,16 @@ line-length = 100
 select = ["E", "F", "I"]
 TOML
 
+echo "=== Creating lockfile ==="
+
+rm -f uv.lock
 uv lock
-uv sync
 
-echo "=== CUDA check ==="
-
-uv run python - <<'PY'
-import torch
-
-print("torch:", torch.__version__)
-print("torch CUDA:", torch.version.cuda)
-print("CUDA available:", torch.cuda.is_available())
-
-if not torch.cuda.is_available():
-    raise RuntimeError("CUDA is not available")
-
-print("GPU:", torch.cuda.get_device_name(0))
-PY
-
-echo "=== Ruff check ==="
-
-uv run ruff format .
-uv run ruff check .
-
+echo
 echo "=== Bootstrap complete ==="
-echo "Commit pyproject.toml and uv.lock to git."
+echo "Created:"
+echo "  pyproject.toml"
+echo "  uv.lock"
+echo
+echo "No PyTorch dependency is managed by uv."
+echo "PyTorch comes from the RunPod template."
