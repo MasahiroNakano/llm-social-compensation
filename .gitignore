@@ -208,7 +208,7 @@ cython_debug/
 tempCodeRunnerFile.py
 
 # Generated chat transcripts
-outputs/
+# outputs/
 
 # Ruff stuff:
 .ruff_cache/
