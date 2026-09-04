@@ -21,3 +21,6 @@ build-backend = "uv_build"
 dev = [
     "ruff>=0.16.6",
 ]
+
+[tool.uv]
+package = false
