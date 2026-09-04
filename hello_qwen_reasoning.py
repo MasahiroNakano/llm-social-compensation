@@ -12,6 +12,8 @@ import argparse
 import os
 import sys
 import time
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -22,6 +24,42 @@ DEFAULT_PROMPT = (
     "ball. How much does the ball cost?"
 )
 DEFAULT_REASONING_END_MARKER = "</think>"
+
+
+@contextmanager
+def timed_stage(
+    timings: list[tuple[str, float]],
+    label: str,
+    synchronize: Callable[[], None] | None = None,
+) -> Iterator[None]:
+    """Measure a stage, synchronizing CUDA around asynchronous GPU work."""
+    if synchronize is not None:
+        synchronize()
+    started = time.perf_counter()
+    try:
+        yield
+    finally:
+        if synchronize is not None:
+            synchronize()
+        timings.append((label, time.perf_counter() - started))
+
+
+def print_timing_breakdown(
+    timings: Sequence[tuple[str, float]], total_seconds: float
+) -> None:
+    """Print stage durations and their share of end-to-end wall time."""
+    measured_seconds = sum(seconds for _, seconds in timings)
+    unaccounted_seconds = max(0.0, total_seconds - measured_seconds)
+    rows = [*timings, ("Other Python/printing overhead", unaccounted_seconds)]
+    label_width = max(len(label) for label, _ in rows)
+
+    print("\n=== Timing breakdown ===")
+    print(f"{'Stage':<{label_width}}  {'Seconds':>10}  {'% total':>8}")
+    print(f"{'-' * label_width}  {'-' * 10}  {'-' * 8}")
+    for label, seconds in rows:
+        percentage = 100 * seconds / total_seconds if total_seconds > 0 else 0.0
+        print(f"{label:<{label_width}}  {seconds:10.3f}  {percentage:7.1f}%")
+    print(f"{'Total wall time':<{label_width}}  {total_seconds:10.3f}  {100.0:7.1f}%")
 
 
 def parse_args() -> argparse.Namespace:
@@ -90,7 +128,9 @@ def validate_args(args: argparse.Namespace) -> None:
     if args.max_new_tokens <= 0:
         raise SystemExit("--max-new-tokens must be greater than 0.")
     if args.temperature <= 0:
-        raise SystemExit("--temperature must be greater than 0 for this thinking model.")
+        raise SystemExit(
+            "--temperature must be greater than 0 for this thinking model."
+        )
     if not 0 < args.top_p <= 1:
         raise SystemExit("--top-p must be in (0, 1].")
     if args.top_k <= 0:
@@ -172,78 +212,124 @@ def find_last_subsequence(tokens: Sequence[int], marker: Sequence[int]) -> int |
 
 def split_reasoning_output(
     output_ids: Sequence[int], tokenizer: Any, marker: str
-) -> tuple[str, str, bool]:
+) -> tuple[str, str, bool, int, int]:
     """Split generated tokens into reasoning and final-answer text."""
     end_ids = marker_token_ids(tokenizer, marker)
     marker_start = find_last_subsequence(output_ids, end_ids)
     if marker_start is None:
         unparsed = tokenizer.decode(output_ids, skip_special_tokens=True).strip()
-        return unparsed, "", False
+        return unparsed, "", False, len(output_ids), 0
 
     answer_start = marker_start + len(end_ids)
     reasoning = tokenizer.decode(
         output_ids[:answer_start], skip_special_tokens=True
     ).strip()
-    answer = tokenizer.decode(output_ids[answer_start:], skip_special_tokens=True).strip()
-    return reasoning, answer, True
+    answer = tokenizer.decode(
+        output_ids[answer_start:], skip_special_tokens=True
+    ).strip()
+    return reasoning, answer, True, marker_start, len(output_ids) - answer_start
 
 
 def main() -> int:
-    args = parse_args()
-    validate_args(args)
-    cache_root = configure_cache(args.cache_dir)
+    total_started = time.perf_counter()
+    timings: list[tuple[str, float]] = []
+
+    with timed_stage(timings, "Arguments and cache setup"):
+        args = parse_args()
+        validate_args(args)
+        cache_root = configure_cache(args.cache_dir)
 
     try:
-        import torch
-        import transformers
-        from transformers import AutoModelForCausalLM, AutoTokenizer
+        with timed_stage(timings, "Import PyTorch/Hugging Face"):
+            import torch
+            import transformers
+            from huggingface_hub import snapshot_download
+            from transformers import AutoModelForCausalLM, AutoTokenizer
     except ImportError as exc:
         print("Missing dependency. Run ./setup.sh first.", file=sys.stderr)
         print(f"Import error: {exc}", file=sys.stderr)
         return 1
 
-    if not torch.cuda.is_available():
+    with timed_stage(timings, "CUDA initialization"):
+        if not torch.cuda.is_available():
+            print(
+                "CUDA is unavailable. Run this script inside a RunPod PyTorch GPU pod.",
+                file=sys.stderr,
+            )
+            return 2
+
+        torch.manual_seed(args.seed)
+        torch.cuda.manual_seed_all(args.seed)
+        dtype = choose_dtype(torch)
+        gpu_index = torch.cuda.current_device()
+        gpu = torch.cuda.get_device_properties(gpu_index)
+        torch.cuda.synchronize()
+
+    with timed_stage(timings, "Print environment information"):
+        print("=== Environment ===")
+        print(f"PyTorch:      {torch.__version__}")
+        print(f"Transformers: {transformers.__version__}")
+        print(f"GPU:          {gpu.name} ({gpu.total_memory / (1024**3):.1f} GiB)")
+        print(f"Precision:    {str(dtype).removeprefix('torch.')}")
+        print(f"HF cache:     {cache_root}")
+        print(f"Model:        {args.model}")
+        print("Timing note: the Hub stage includes downloads on a cache miss.")
+        sys.stdout.flush()
+
+    with timed_stage(timings, "Hub download/cache resolution"):
+        snapshot_path = snapshot_download(
+            repo_id=args.model,
+            cache_dir=os.environ["HF_HUB_CACHE"],
+        )
+
+    with timed_stage(timings, "Load tokenizer from disk"):
+        tokenizer = AutoTokenizer.from_pretrained(
+            snapshot_path,
+            local_files_only=True,
+        )
+
+    try:
+        with timed_stage(
+            timings,
+            "Load model weights onto GPU",
+            synchronize=torch.cuda.synchronize,
+        ):
+            model = AutoModelForCausalLM.from_pretrained(
+                snapshot_path,
+                device_map="auto",
+                low_cpu_mem_usage=True,
+                local_files_only=True,
+                **dtype_load_kwargs(transformers.__version__, dtype),
+            )
+            model.eval()
+    except torch.cuda.OutOfMemoryError:
         print(
-            "CUDA is unavailable. Run this script inside a RunPod PyTorch GPU pod.",
+            "CUDA ran out of memory while loading the model. Use a larger GPU or "
+            "a smaller/quantized model.",
             file=sys.stderr,
         )
-        return 2
+        print_timing_breakdown(timings, time.perf_counter() - total_started)
+        return 3
 
-    torch.manual_seed(args.seed)
-    torch.cuda.manual_seed_all(args.seed)
-    dtype = choose_dtype(torch)
+    with timed_stage(timings, "Format and tokenize prompt"):
+        model_inputs = tokenizer.apply_chat_template(
+            [{"role": "user", "content": args.prompt}],
+            add_generation_prompt=True,
+            tokenize=True,
+            return_dict=True,
+            return_tensors="pt",
+        )
 
-    gpu_index = torch.cuda.current_device()
-    gpu = torch.cuda.get_device_properties(gpu_index)
-    print("=== Environment ===")
-    print(f"PyTorch:      {torch.__version__}")
-    print(f"Transformers: {transformers.__version__}")
-    print(f"GPU:          {gpu.name} ({gpu.total_memory / (1024**3):.1f} GiB)")
-    print(f"Precision:    {str(dtype).removeprefix('torch.')}")
-    print(f"HF cache:     {cache_root}")
-    print(f"Model:        {args.model}")
-
-    tokenizer = AutoTokenizer.from_pretrained(args.model)
-    model = AutoModelForCausalLM.from_pretrained(
-        args.model,
-        device_map="auto",
-        low_cpu_mem_usage=True,
-        **dtype_load_kwargs(transformers.__version__, dtype),
-    )
-    model.eval()
-
-    model_inputs = tokenizer.apply_chat_template(
-        [{"role": "user", "content": args.prompt}],
-        add_generation_prompt=True,
-        tokenize=True,
-        return_dict=True,
-        return_tensors="pt",
-    )
-    input_device = input_device_for(model)
-    model_inputs = {
-        key: value.to(input_device) if hasattr(value, "to") else value
-        for key, value in model_inputs.items()
-    }
+    with timed_stage(
+        timings,
+        "Move prompt tensors to GPU",
+        synchronize=torch.cuda.synchronize,
+    ):
+        input_device = input_device_for(model)
+        model_inputs = {
+            key: value.to(input_device) if hasattr(value, "to") else value
+            for key, value in model_inputs.items()
+        }
     prompt_tokens = int(model_inputs["input_ids"].shape[-1])
 
     generation_kwargs: dict[str, Any] = {
@@ -260,41 +346,77 @@ def main() -> int:
 
     print("\nGenerating reasoning and final answer...")
     try:
-        torch.cuda.synchronize()
-        started = time.perf_counter()
-        with torch.inference_mode():
-            generated_ids = model.generate(**model_inputs, **generation_kwargs)
-        torch.cuda.synchronize()
+        with timed_stage(
+            timings,
+            "Autoregressive generation",
+            synchronize=torch.cuda.synchronize,
+        ):
+            with torch.inference_mode():
+                generated_ids = model.generate(**model_inputs, **generation_kwargs)
     except torch.cuda.OutOfMemoryError:
         print(
             "CUDA ran out of memory. Use a larger GPU, fewer generated tokens, "
             "or a smaller/quantized model.",
             file=sys.stderr,
         )
+        print_timing_breakdown(timings, time.perf_counter() - total_started)
         return 3
 
-    elapsed = time.perf_counter() - started
-    output_ids = generated_ids[0, prompt_tokens:].tolist()
-    reasoning, final_answer, found_marker = split_reasoning_output(
-        output_ids, tokenizer, args.reasoning_end_marker
+    generation_seconds = dict(timings)["Autoregressive generation"]
+
+    with timed_stage(
+        timings,
+        "Transfer generated tokens to CPU",
+        synchronize=torch.cuda.synchronize,
+    ):
+        output_ids = generated_ids[0, prompt_tokens:].tolist()
+
+    with timed_stage(timings, "Split and decode model output"):
+        (
+            reasoning,
+            final_answer,
+            found_marker,
+            reasoning_tokens,
+            final_answer_tokens,
+        ) = split_reasoning_output(output_ids, tokenizer, args.reasoning_end_marker)
+
+    with timed_stage(timings, "Print reasoning and final answer"):
+        print("\n=== Reasoning trace (model-emitted) ===")
+        print(reasoning or "[No reasoning text was generated.]")
+        print("\n=== Final answer ===")
+        if found_marker:
+            print(
+                final_answer
+                or "[The model emitted no text after the reasoning marker.]"
+            )
+        else:
+            print(
+                "[No final answer could be separated because the model did not emit "
+                f"{args.reasoning_end_marker!r}. The reasoning may have been truncated.]"
+            )
+
+        print("\n=== Generation stats ===")
+        print(f"Prompt tokens:     {prompt_tokens}")
+        print(f"Reasoning tokens:  {reasoning_tokens}")
+        print(f"Final-answer tokens: {final_answer_tokens}")
+        print(f"All generated tokens: {len(output_ids)}")
+        print(f"Generation time:   {generation_seconds:.3f} s")
+        if generation_seconds > 0:
+            print(
+                f"Generation throughput: "
+                f"{len(output_ids) / generation_seconds:.2f} tokens/s"
+            )
+        sys.stdout.flush()
+
+    total_seconds = time.perf_counter() - total_started
+    print_timing_breakdown(timings, total_seconds)
+
+    print(
+        "\nNote: reasoning and final-answer generation happen inside one "
+        "generate() call, so their compute times are not separately observable "
+        "without changing the generation procedure. Their token counts are "
+        "reported above."
     )
-
-    print("\n=== Reasoning trace (model-emitted) ===")
-    print(reasoning or "[No reasoning text was generated.]")
-    print("\n=== Final answer ===")
-    if found_marker:
-        print(final_answer or "[The model emitted no text after the reasoning marker.]")
-    else:
-        print(
-            "[No final answer could be separated because the model did not emit "
-            f"{args.reasoning_end_marker!r}. The reasoning may have been truncated.]"
-        )
-
-    print("\n=== Generation stats ===")
-    print(f"Generated tokens: {len(output_ids)}")
-    print(f"Generation time:  {elapsed:.2f} s")
-    if elapsed > 0:
-        print(f"Throughput:       {len(output_ids) / elapsed:.2f} tokens/s")
 
     return 0 if found_marker else 4
 
