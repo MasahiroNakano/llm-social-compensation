@@ -141,6 +141,20 @@ trace is displayed. `/show` reprints the last result with the current display
 setting without generating it again. `/clear` clears the conversation and
 `/quit` exits.
 
+Each invocation creates one timestamped Markdown transcript under `outputs/`.
+User messages are right-aligned, assistant messages are left-aligned, and
+system/status messages are centered. Every reasoning trace and generation stat
+is retained; reasoning is expanded when console reasoning is on and collapsed
+when it is off. A collapsed appendix also preserves the complete console log.
+Generated transcripts are ignored by Git. To choose a `.md` or `.txt` path
+yourself, use:
+
+```bash
+python3 chat_qwen.py --output-file outputs/my_chat.md
+```
+
+An existing file is never overwritten.
+
 In a Python session or notebook, generation and printing are separate:
 
 ```python

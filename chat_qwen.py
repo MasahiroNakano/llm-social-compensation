@@ -8,11 +8,15 @@ treated as a complete or faithful account of the model's internal computation.
 from __future__ import annotations
 
 import argparse
+import html
 import os
 import sys
 import time
+from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
+from datetime import datetime
 from functools import lru_cache
+from io import StringIO
 from pathlib import Path
 from typing import Any, Sequence, TextIO
 
@@ -41,6 +45,26 @@ class _Runtime:
     tokenizer: Any
     model: Any
     input_device: Any
+
+
+class _Tee:
+    """Write console output to the terminal and the run transcript."""
+
+    def __init__(self, *streams: TextIO) -> None:
+        self.streams = streams
+
+    def write(self, text: str) -> int:
+        for stream in self.streams:
+            stream.write(text)
+            stream.flush()
+        return len(text)
+
+    def flush(self) -> None:
+        for stream in self.streams:
+            stream.flush()
+
+    def isatty(self) -> bool:
+        return any(stream.isatty() for stream in self.streams)
 
 
 def parse_args() -> argparse.Namespace:
@@ -116,6 +140,15 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Allow very slow CPU inference when CUDA is unavailable.",
     )
+    parser.add_argument(
+        "--output-file",
+        type=Path,
+        default=None,
+        help=(
+            "Transcript path. By default, create one timestamped Markdown file "
+            "under outputs/."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -162,7 +195,113 @@ def configure_cache(cache_dir: Path | None) -> Path:
     os.environ.setdefault("HF_HUB_CACHE", str(chosen / "hub"))
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
     os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+    os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
     return chosen
+
+
+def _transcript_path(requested_path: Path | None) -> Path:
+    if requested_path is not None:
+        return requested_path.expanduser().resolve()
+    timestamp = datetime.now().astimezone().strftime("%Y-%m-%d_%H-%M-%S_%f")
+    return (Path.cwd() / "outputs" / f"chat_qwen_{timestamp}.md").resolve()
+
+
+def _write_transcript_header(
+    transcript: TextIO, path: Path, args: argparse.Namespace
+) -> None:
+    started = datetime.now().astimezone()
+    print("# Qwen chat transcript", file=transcript)
+    print(file=transcript)
+    print(f"- Started: {started.isoformat(timespec='seconds')}", file=transcript)
+    print(f"- Model: `{args.model}`", file=transcript)
+    print(
+        f"- Console reasoning initially shown: `{args.show_reasoning}`",
+        file=transcript,
+    )
+    print(f"- Console statistics shown: `{args.show_stats}`", file=transcript)
+    print(f"- Maximum new tokens: `{args.max_new_tokens}`", file=transcript)
+    print(f"- Transcript: `{path}`", file=transcript)
+    print("\n---\n", file=transcript)
+    transcript.flush()
+
+
+def _write_system_message(transcript: TextIO, message: str) -> None:
+    rendered = html.escape(message).replace("\n", "<br>\n")
+    print(
+        f'<p align="center"><em>⚙️ System: {rendered}</em></p>\n',
+        file=transcript,
+    )
+    transcript.flush()
+
+
+def _write_user_message(transcript: TextIO, message: str) -> None:
+    rendered = html.escape(message).replace("\n", "<br>\n")
+    print('<table width="100%">', file=transcript)
+    print("<tr>", file=transcript)
+    print('<td width="40%"></td>', file=transcript)
+    print('<td width="60%" align="right">', file=transcript)
+    print(f"<strong>👤 User</strong><br><br>\n{rendered}", file=transcript)
+    print("</td>", file=transcript)
+    print("</tr>", file=transcript)
+    print("</table>\n", file=transcript)
+    transcript.flush()
+
+
+def _write_assistant_message(
+    transcript: TextIO, output: LLMOutput, *, reasoning_open: bool
+) -> None:
+    if output.reasoning_complete:
+        response = output.response or "[The model emitted no final response.]"
+    else:
+        response = (
+            "[No final response could be separated. The reasoning was probably "
+            "truncated; retry with a larger max_new_tokens value.]"
+        )
+    rendered_response = html.escape(response).replace("\n", "<br>\n")
+    rendered_reasoning = html.escape(
+        output.reasoning or "[No reasoning text was generated.]"
+    )
+    details_attribute = " open" if reasoning_open else ""
+    throughput = (
+        output.generated_tokens / output.generation_seconds
+        if output.generation_seconds > 0
+        else 0.0
+    )
+
+    print('<table width="100%">', file=transcript)
+    print("<tr>", file=transcript)
+    print('<td width="70%" align="left">', file=transcript)
+    print("<strong>🤖 Assistant</strong><br><br>", file=transcript)
+    print(rendered_response, file=transcript)
+    print("<br><br>", file=transcript)
+    print(f"<details{details_attribute}>", file=transcript)
+    print("<summary>🧠 Model-emitted reasoning</summary>", file=transcript)
+    print(f"<pre>{rendered_reasoning}</pre>", file=transcript)
+    print("</details>", file=transcript)
+    print("<br>", file=transcript)
+    print(
+        "<sub>"
+        f"{output.generated_tokens} generated tokens · "
+        f"{output.generation_seconds:.2f} s · {throughput:.2f} tokens/s"
+        "</sub>",
+        file=transcript,
+    )
+    print("</td>", file=transcript)
+    print('<td width="30%"></td>', file=transcript)
+    print("</tr>", file=transcript)
+    print("</table>\n", file=transcript)
+    transcript.flush()
+
+
+def _write_console_log(transcript: TextIO, console_output: str) -> None:
+    """Preserve every emitted console line in a collapsed transcript appendix."""
+
+    print("\n---\n", file=transcript)
+    print("<details>", file=transcript)
+    print("<summary>Complete console log</summary>", file=transcript)
+    print(f"<pre>{html.escape(console_output)}</pre>", file=transcript)
+    print("</details>", file=transcript)
+    transcript.flush()
 
 
 def _dtype_load_kwargs(transformers_version: str, dtype: Any) -> dict[str, Any]:
@@ -435,6 +574,7 @@ def chat(
     allow_cpu: bool = False,
     show_reasoning: bool = False,
     show_stats: bool = False,
+    transcript: TextIO | None = None,
 ) -> None:
     """Run a multi-turn terminal chat while keeping the model in memory."""
 
@@ -444,39 +584,67 @@ def chat(
         "Type anything to chat. Commands: /reasoning on, /reasoning off, "
         "/show, /clear, /quit"
     )
+    if transcript is not None:
+        _write_system_message(
+            transcript,
+            "Interactive chat started. Commands: /reasoning on, "
+            "/reasoning off, /show, /clear, /quit",
+        )
 
     while True:
         try:
-            prompt = input("\nYou: ").strip()
+            raw_prompt = input("\nYou: ")
+            prompt = raw_prompt.strip()
         except (EOFError, KeyboardInterrupt):
             print("\nGoodbye.")
+            if transcript is not None:
+                _write_system_message(transcript, "Chat ended by the user.")
             return
 
         command = prompt.lower()
         if not prompt:
             continue
+        if transcript is not None:
+            _write_user_message(transcript, raw_prompt)
         if command in {"/quit", "/exit"}:
             print("Goodbye.")
+            if transcript is not None:
+                _write_system_message(transcript, "Chat ended by the user.")
             return
         if command == "/clear":
             history.clear()
             last_output = None
             print("Conversation cleared.")
+            if transcript is not None:
+                _write_system_message(transcript, "Conversation history cleared.")
             continue
         if command in {"/reasoning on", "/reasoning off"}:
             show_reasoning = command.endswith("on")
             state = "shown" if show_reasoning else "hidden"
             print(f"Reasoning will be {state}. Use /show to reprint the last result.")
+            if transcript is not None:
+                _write_system_message(
+                    transcript,
+                    f"Console reasoning display changed: {state}.",
+                )
             continue
         if command == "/show":
             if last_output is None:
                 print("There is no previous result to show.")
+                if transcript is not None:
+                    _write_system_message(transcript, "There is no result to reprint.")
             else:
                 print_result(
                     last_output,
                     show_reasoning=show_reasoning,
                     show_stats=show_stats,
                 )
+                if transcript is not None:
+                    _write_system_message(
+                        transcript,
+                        "The previous result was reprinted in the console; "
+                        "its original transcript entry is above.",
+                    )
             continue
 
         last_output = LLM(
@@ -498,6 +666,12 @@ def chat(
             show_reasoning=show_reasoning,
             show_stats=show_stats,
         )
+        if transcript is not None:
+            _write_assistant_message(
+                transcript,
+                last_output,
+                reasoning_open=show_reasoning,
+            )
         if last_output.reasoning_complete:
             history.extend(
                 [
@@ -507,8 +681,7 @@ def chat(
             )
 
 
-def main() -> int:
-    args = parse_args()
+def _run(args: argparse.Namespace, transcript: TextIO) -> int:
     try:
         validate_generation_args(
             max_new_tokens=args.max_new_tokens,
@@ -530,22 +703,69 @@ def main() -> int:
             "allow_cpu": args.allow_cpu,
         }
         if args.prompt is None:
+            _write_system_message(transcript, f"System prompt: {args.system_prompt}")
             chat(
                 **common_options,
                 show_reasoning=args.show_reasoning,
                 show_stats=args.show_stats,
+                transcript=transcript,
             )
         else:
+            print(f"\nYou: {args.prompt}")
+            _write_system_message(transcript, f"System prompt: {args.system_prompt}")
+            _write_user_message(transcript, args.prompt)
             output = LLM(args.prompt, **common_options)
             print_result(
                 output,
                 show_reasoning=args.show_reasoning,
                 show_stats=args.show_stats,
             )
+            _write_assistant_message(
+                transcript,
+                output,
+                reasoning_open=args.show_reasoning,
+            )
     except (ValueError, RuntimeError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
+        _write_system_message(transcript, f"Error: {exc}")
         return 1
     return 0
+
+
+def main() -> int:
+    args = parse_args()
+    output_path = _transcript_path(args.output_file)
+    try:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        # Exclusive creation protects an existing transcript from being
+        # overwritten when --output-file names a file that already exists.
+        transcript = output_path.open("x", encoding="utf-8")
+    except FileExistsError:
+        print(
+            f"Error: transcript already exists and was not overwritten: {output_path}",
+            file=sys.stderr,
+        )
+        return 1
+    except OSError as exc:
+        print(f"Error: could not create transcript {output_path}: {exc}", file=sys.stderr)
+        return 1
+
+    original_stdout = sys.stdout
+    original_stderr = sys.stderr
+    console_capture = StringIO()
+    with transcript:
+        _write_transcript_header(transcript, output_path, args)
+        with redirect_stdout(_Tee(original_stdout, console_capture)), redirect_stderr(
+            _Tee(original_stderr, console_capture)
+        ):
+            print(f"Transcript: {output_path}")
+            result = _run(args, transcript)
+            finished = datetime.now().astimezone().isoformat(timespec="seconds")
+            print(f"\nTranscript saved to: {output_path}")
+            print(f"Finished: {finished}")
+        _write_system_message(transcript, f"Run finished at {finished}.")
+        _write_console_log(transcript, console_capture.getvalue())
+    return result
 
 
 if __name__ == "__main__":
