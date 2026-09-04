@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 import unittest
 
 from batch_qwen import (
     DEFAULT_PROMPTS,
+    batch_ranges,
     build_requests,
     load_prompt_set,
-    parse_completion,
+    parse_tokens,
 )
 
 
@@ -62,31 +62,27 @@ class PromptSetTests(unittest.TestCase):
         )
         self.assertEqual([request.prompt_id for request in requests], ["L4_13"])
 
-    def test_completion_with_reasoning_is_split(self) -> None:
-        completion = SimpleNamespace(
-            token_ids=[1, 2, 3, 4],
-            finish_reason="stop",
-            stop_reason=None,
-        )
-        parsed = parse_completion(
-            completion,
+    def test_manual_batch_ranges_include_short_final_batch(self) -> None:
+        self.assertEqual(list(batch_ranges(16, 6)), [(0, 6), (6, 12), (12, 16)])
+
+    def test_tokens_with_reasoning_are_split(self) -> None:
+        parsed = parse_tokens(
+            [1, 2, 3, 4],
             tokenizer=FakeTokenizer(),
             reasoning_end_marker="</think>",
+            eos_ids={4},
         )
         self.assertEqual(parsed["reasoning"], "reasoning")
         self.assertEqual(parsed["response"], "final")
         self.assertTrue(parsed["reasoning_complete"])
+        self.assertEqual(parsed["finish_reason"], "stop")
 
-    def test_completion_without_reasoning_is_kept_as_response(self) -> None:
-        completion = SimpleNamespace(
-            token_ids=[3, 4],
-            finish_reason="stop",
-            stop_reason=None,
-        )
-        parsed = parse_completion(
-            completion,
+    def test_tokens_without_reasoning_are_kept_as_response(self) -> None:
+        parsed = parse_tokens(
+            [3, 4],
             tokenizer=FakeTokenizer(),
             reasoning_end_marker="</think>",
+            eos_ids={4},
         )
         self.assertIsNone(parsed["reasoning"])
         self.assertEqual(parsed["response"], "final")

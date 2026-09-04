@@ -1,22 +1,26 @@
 #!/usr/bin/env python3
-"""Sample every criticism-baseline prompt efficiently with vLLM."""
+"""Sample every criticism-baseline prompt in manual Transformers mini-batches."""
 
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
+import os
 import sys
 import time
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Iterator, Sequence
 
-from batch_qwen_reasoning_vllm import (
+from hello_qwen_reasoning import (
     DEFAULT_MODEL,
     DEFAULT_REASONING_END_MARKER,
+    choose_dtype,
     configure_cache,
+    dtype_load_kwargs,
+    input_device_for,
     split_reasoning_output,
 )
 
@@ -27,7 +31,7 @@ DEFAULT_PROMPTS = ROOT_DIR / "prompts" / "criticism_baseline.json"
 
 @dataclass(frozen=True)
 class PromptRequest:
-    """One prompt-condition pair for which vLLM will sample many completions."""
+    """One prompt-condition pair for which the model will produce samples."""
 
     prompt_id: str
     level: int
@@ -52,16 +56,18 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--samples-per-prompt",
         type=int,
         default=16,
-        help="Stochastic completions per prompt and condition (default: 16).",
+        help="Stochastic samples per prompt and condition (default: 16).",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=8,
+        help="Number of samples generated simultaneously (default: 8).",
     )
     parser.add_argument("--max-new-tokens", type=int, default=4096)
-    parser.add_argument("--temperature", type=float, default=0.6)
+    parser.add_argument("--temperature", type=float, default=0.7)
     parser.add_argument("--top-p", type=float, default=0.95)
-    parser.add_argument("--top-k", type=int, default=20)
-    parser.add_argument("--min-p", type=float, default=0.0)
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--tensor-parallel-size", type=int, default=1)
-    parser.add_argument("--gpu-memory-utilization", type=float, default=0.9)
     parser.add_argument("--cache-dir", type=Path)
     parser.add_argument(
         "--system-prompt",
@@ -80,13 +86,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Validate and preview the experiment without loading vLLM.",
+        help="Validate and preview the experiment without loading the model.",
     )
     return parser.parse_args(argv)
 
 
 def validate_args(args: argparse.Namespace) -> None:
-    for name in ("samples_per_prompt", "max_new_tokens", "tensor_parallel_size"):
+    for name in ("samples_per_prompt", "batch_size", "max_new_tokens"):
         if getattr(args, name) <= 0:
             option = "--" + name.replace("_", "-")
             raise SystemExit(f"{option} must be greater than 0.")
@@ -94,12 +100,6 @@ def validate_args(args: argparse.Namespace) -> None:
         raise SystemExit("--temperature must be greater than 0 for sampling.")
     if not 0 < args.top_p <= 1:
         raise SystemExit("--top-p must be in (0, 1].")
-    if args.top_k <= 0:
-        raise SystemExit("--top-k must be greater than 0.")
-    if not 0 <= args.min_p <= 1:
-        raise SystemExit("--min-p must be in [0, 1].")
-    if not 0 < args.gpu_memory_utilization <= 1:
-        raise SystemExit("--gpu-memory-utilization must be in (0, 1].")
     if not args.reasoning_end_marker:
         raise SystemExit("--reasoning-end-marker must not be empty.")
 
@@ -143,7 +143,7 @@ def build_requests(
     condition: str,
     prompt_ids: set[str] | None = None,
 ) -> list[PromptRequest]:
-    """Create one vLLM request for each selected prompt-condition pair."""
+    """Create one request for each selected prompt-condition pair."""
 
     prompts = prompt_set["prompts"]
     known_ids = {prompt["id"] for prompt in prompts}
@@ -175,6 +175,13 @@ def build_requests(
     return requests
 
 
+def batch_ranges(total: int, batch_size: int) -> Iterator[tuple[int, int]]:
+    """Yield half-open ranges for manual mini-batching."""
+
+    for start in range(0, total, batch_size):
+        yield start, min(start + batch_size, total)
+
+
 def output_path(requested: Path | None) -> Path:
     """Choose a timestamped default and refuse to overwrite an existing run."""
 
@@ -191,18 +198,122 @@ def output_path(requested: Path | None) -> Path:
     return path
 
 
-def parse_completion(
-    completion: Any,
+def load_runtime(args: argparse.Namespace) -> tuple[Any, Any, Any]:
+    """Load the same PyTorch/Transformers stack as batch-inference.py."""
+
+    cache_root = configure_cache(args.cache_dir)
+    try:
+        import torch
+        import transformers
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+    except ImportError as exc:
+        raise RuntimeError("Missing dependency. Run ./setup.sh first.") from exc
+
+    if not torch.cuda.is_available():
+        raise RuntimeError(
+            "CUDA is unavailable. Run this script inside a RunPod PyTorch GPU pod."
+        )
+
+    torch.manual_seed(args.seed)
+    torch.cuda.manual_seed_all(args.seed)
+    dtype = choose_dtype(torch)
+    gpu = torch.cuda.get_device_properties(torch.cuda.current_device())
+
+    print("=== Environment ===")
+    print(f"PyTorch:      {torch.__version__}")
+    print(f"Transformers: {transformers.__version__}")
+    print(f"GPU:          {gpu.name} ({gpu.total_memory / (1024**3):.1f} GiB)")
+    print(f"Precision:    {str(dtype).removeprefix('torch.')}")
+    print(f"HF cache:     {cache_root}")
+    print(f"Model:        {args.model}")
+
+    tokenizer = AutoTokenizer.from_pretrained(
+        args.model,
+        cache_dir=os.environ["HF_HUB_CACHE"],
+    )
+    if tokenizer.pad_token_id is None:
+        if tokenizer.eos_token_id is None:
+            raise RuntimeError(
+                "The tokenizer has neither a pad token nor an EOS token."
+            )
+        tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.padding_side = "left"
+
+    model = AutoModelForCausalLM.from_pretrained(
+        args.model,
+        cache_dir=os.environ["HF_HUB_CACHE"],
+        device_map="auto",
+        low_cpu_mem_usage=True,
+        **dtype_load_kwargs(transformers.__version__, dtype),
+    )
+    model.eval()
+    return torch, tokenizer, model
+
+
+def prepare_inputs(
+    tokenizer: Any,
+    *,
+    request: PromptRequest,
+    system_prompt: str,
+    batch_size: int,
+    input_device: Any,
+) -> Any:
+    """Render and tokenize one repeated-prompt mini-batch."""
+
+    messages = [
+        [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": request.prompt},
+        ]
+        for _ in range(batch_size)
+    ]
+    texts = tokenizer.apply_chat_template(
+        messages,
+        tokenize=False,
+        add_generation_prompt=True,
+    )
+    return tokenizer(
+        texts,
+        return_tensors="pt",
+        padding=True,
+        add_special_tokens=False,
+    ).to(input_device)
+
+
+def eos_token_ids(model: Any, tokenizer: Any) -> set[int]:
+    configured = getattr(model.generation_config, "eos_token_id", None)
+    if configured is None:
+        configured = tokenizer.eos_token_id
+    if configured is None:
+        return set()
+    if isinstance(configured, int):
+        return {configured}
+    return {int(token_id) for token_id in configured}
+
+
+def trim_generated_tokens(token_ids: Sequence[int], eos_ids: set[int]) -> list[int]:
+    """Remove batch padding after the first generated EOS, retaining the EOS."""
+
+    result = [int(token_id) for token_id in token_ids]
+    for index, token_id in enumerate(result):
+        if token_id in eos_ids:
+            return result[: index + 1]
+    return result
+
+
+def parse_tokens(
+    token_ids: Sequence[int],
     *,
     tokenizer: Any,
     reasoning_end_marker: str,
+    eos_ids: set[int],
 ) -> dict[str, Any]:
-    """Decode one completion, supporting both thinking and instruct models."""
+    """Decode one generated sequence from a thinking or instruct checkpoint."""
 
-    token_ids = [int(token_id) for token_id in completion.token_ids]
-    reasoning, answer, reasoning_complete = split_reasoning_output(
-        token_ids, tokenizer, reasoning_end_marker
-    )
+    parsed = split_reasoning_output(token_ids, tokenizer, reasoning_end_marker)
+    reasoning, answer, reasoning_complete = parsed[:3]
+    reasoning_tokens = int(parsed[3]) if len(parsed) >= 5 else 0
+    answer_tokens = int(parsed[4]) if len(parsed) >= 5 else len(token_ids)
     clean_output = tokenizer.decode(token_ids, skip_special_tokens=True).strip()
     raw_response = tokenizer.decode(token_ids, skip_special_tokens=False).strip()
     if reasoning_complete:
@@ -211,16 +322,17 @@ def parse_completion(
     else:
         response = clean_output
         reasoning_text = None
+        reasoning_tokens = 0
+        answer_tokens = len(token_ids)
 
-    finish_reason = getattr(completion, "finish_reason", None)
-    stop_reason = getattr(completion, "stop_reason", None)
     return {
         "response": response,
         "reasoning": reasoning_text,
         "reasoning_complete": reasoning_complete,
         "raw_response": raw_response,
-        "finish_reason": "" if finish_reason is None else str(finish_reason),
-        "stop_reason": "" if stop_reason is None else str(stop_reason),
+        "finish_reason": "stop" if token_ids and token_ids[-1] in eos_ids else "length",
+        "reasoning_tokens": reasoning_tokens,
+        "response_tokens": answer_tokens,
         "generated_tokens": len(token_ids),
     }
 
@@ -244,7 +356,7 @@ def run(args: argparse.Namespace) -> int:
     )
     print(
         f"Prepared {len(requests)} prompt-condition requests and "
-        f"{total_samples} total samples."
+        f"{total_samples} total samples (manual batch size {args.batch_size})."
     )
     if args.dry_run:
         print("\nFirst user prompt:\n")
@@ -253,133 +365,107 @@ def run(args: argparse.Namespace) -> int:
 
     try:
         destination = output_path(args.output)
-    except FileExistsError as exc:
+        torch, tokenizer, model = load_runtime(args)
+    except (FileExistsError, RuntimeError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 
-    configure_cache(args.cache_dir)
-    try:
-        from vllm import LLM, SamplingParams
-    except ImportError as exc:
-        print(
-            "Missing dependency: vLLM. Install it with "
-            "`python3 -m pip install vllm`.",
-            file=sys.stderr,
-        )
-        print(f"Import error: {exc}", file=sys.stderr)
-        return 1
-
-    print(f"Loading {args.model}...")
-    try:
-        llm = LLM(
-            model=args.model,
-            tensor_parallel_size=args.tensor_parallel_size,
-            gpu_memory_utilization=args.gpu_memory_utilization,
-            seed=args.seed,
-        )
-    except Exception as exc:
-        print(f"Failed to initialize vLLM: {exc}", file=sys.stderr)
-        return 2
-
-    tokenizer = llm.get_tokenizer()
-    rendered_prompts = [
-        tokenizer.apply_chat_template(
-            [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": request.prompt},
-            ],
-            add_generation_prompt=True,
-            tokenize=False,
-        )
-        for request in requests
-    ]
-    sampling_params = SamplingParams(
-        n=args.samples_per_prompt,
-        max_tokens=args.max_new_tokens,
-        temperature=args.temperature,
-        top_p=args.top_p,
-        top_k=args.top_k,
-        min_p=args.min_p,
-        seed=args.seed,
-    )
-
-    print("Generating all prompts in one dynamically batched vLLM call...")
-    started = time.perf_counter()
-    try:
-        request_outputs = llm.generate(
-            rendered_prompts, sampling_params, use_tqdm=True
-        )
-    except Exception as exc:
-        print(f"vLLM generation failed: {exc}", file=sys.stderr)
-        return 3
-    elapsed = time.perf_counter() - started
-
-    if len(request_outputs) != len(requests):
-        print(
-            f"Expected {len(requests)} request outputs; got {len(request_outputs)}.",
-            file=sys.stderr,
-        )
-        return 3
-
     generation_config = {
+        "backend": "pytorch_transformers",
         "model": args.model,
         "system_prompt": system_prompt,
         "samples_per_prompt": args.samples_per_prompt,
+        "batch_size": args.batch_size,
         "max_new_tokens": args.max_new_tokens,
         "temperature": args.temperature,
         "top_p": args.top_p,
-        "top_k": args.top_k,
-        "min_p": args.min_p,
         "seed": args.seed,
-        "tensor_parallel_size": args.tensor_parallel_size,
-        "gpu_memory_utilization": args.gpu_memory_utilization,
         "prompt_file": str(args.prompts.resolve()),
         "prompt_file_sha256": hashlib.sha256(args.prompts.read_bytes()).hexdigest(),
         "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
     }
-
+    generation_options = {
+        "do_sample": True,
+        "temperature": args.temperature,
+        "top_p": args.top_p,
+        "max_new_tokens": args.max_new_tokens,
+        "use_cache": True,
+        "pad_token_id": tokenizer.pad_token_id,
+    }
+    input_device = input_device_for(model)
+    endings = eos_token_ids(model, tokenizer)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    records_written = 0
+    completed = 0
     total_generated_tokens = 0
     incomplete_reasoning = 0
+
+    torch.cuda.synchronize()
+    started = time.perf_counter()
     try:
         with destination.open("x", encoding="utf-8") as output_file:
-            for request, request_output in zip(requests, request_outputs):
-                completions = sorted(
-                    request_output.outputs, key=lambda output: output.index
-                )
-                if len(completions) != args.samples_per_prompt:
-                    raise RuntimeError(
-                        f"{request.prompt_id}/{request.condition}: expected "
-                        f"{args.samples_per_prompt} completions, got {len(completions)}"
+            for request in requests:
+                for start, end in batch_ranges(
+                    args.samples_per_prompt, args.batch_size
+                ):
+                    current_size = end - start
+                    print(
+                        f"{request.prompt_id}/{request.condition}: samples "
+                        f"{start + 1}-{end}/{args.samples_per_prompt} "
+                        f"({completed}/{total_samples} complete)"
                     )
-                for sample_number, completion in enumerate(completions, start=1):
-                    parsed = parse_completion(
-                        completion,
-                        tokenizer=tokenizer,
-                        reasoning_end_marker=args.reasoning_end_marker,
+                    inputs = prepare_inputs(
+                        tokenizer,
+                        request=request,
+                        system_prompt=system_prompt,
+                        batch_size=current_size,
+                        input_device=input_device,
                     )
-                    record = {
-                        "sample_id": (
-                            f"{request.prompt_id}.{request.condition}."
-                            f"s{sample_number:02d}"
-                        ),
-                        **asdict(request),
-                        "sample_number": sample_number,
-                        **parsed,
-                        "generation_config": generation_config,
-                    }
-                    output_file.write(json.dumps(record, ensure_ascii=False) + "\n")
-                    records_written += 1
-                    total_generated_tokens += parsed["generated_tokens"]
-                    incomplete_reasoning += not parsed["reasoning_complete"]
-    except (OSError, RuntimeError) as exc:
-        print(f"Could not write complete results: {exc}", file=sys.stderr)
-        return 4
+                    input_width = int(inputs["input_ids"].shape[1])
+                    with torch.inference_mode():
+                        sequences = model.generate(**inputs, **generation_options)
+                    generated_rows = sequences[:, input_width:].detach().cpu().tolist()
 
+                    for offset, row in enumerate(generated_rows, start=1):
+                        sample_number = start + offset
+                        token_ids = trim_generated_tokens(row, endings)
+                        parsed = parse_tokens(
+                            token_ids,
+                            tokenizer=tokenizer,
+                            reasoning_end_marker=args.reasoning_end_marker,
+                            eos_ids=endings,
+                        )
+                        record = {
+                            "sample_id": (
+                                f"{request.prompt_id}.{request.condition}."
+                                f"s{sample_number:02d}"
+                            ),
+                            **asdict(request),
+                            "sample_number": sample_number,
+                            **parsed,
+                            "generation_config": generation_config,
+                        }
+                        output_file.write(json.dumps(record, ensure_ascii=False) + "\n")
+                        output_file.flush()
+                        completed += 1
+                        total_generated_tokens += parsed["generated_tokens"]
+                        incomplete_reasoning += not parsed["reasoning_complete"]
+                    del inputs, sequences, generated_rows
+    except RuntimeError as exc:
+        if "out of memory" not in str(exc).lower():
+            raise
+        print(
+            "CUDA ran out of memory. Retry with a smaller --batch-size or fewer "
+            "--max-new-tokens. The JSONL file contains the completed samples.",
+            file=sys.stderr,
+        )
+        return 3
+
+    torch.cuda.synchronize()
+    elapsed = time.perf_counter() - started
     throughput = total_generated_tokens / elapsed if elapsed > 0 else 0.0
     print("\n=== Criticism baseline complete ===")
-    print(f"Samples:          {records_written}")
+    print(f"Samples:          {completed}")
+    print(f"Batch size:       {args.batch_size}")
     print(f"Generated tokens: {total_generated_tokens}")
     print(f"Generation time:  {elapsed:.2f} s")
     print(f"Throughput:       {throughput:.2f} tokens/s")

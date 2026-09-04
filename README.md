@@ -38,8 +38,9 @@ analysis code will be added after this basic GPU/model setup is confirmed.
   and separates the model-emitted reasoning from its final answer.
 - `chat_qwen.py` provides a reusable Python interface and an interactive,
   multi-turn chat with optional reasoning display.
-- `batch_qwen.py` runs the structured criticism-baseline prompt set through
-  vLLM and samples 16 responses per prompt by default.
+- `batch_qwen.py` runs the structured criticism-baseline prompt set in manual
+  PyTorch/Transformers mini-batches and samples 16 responses per prompt by
+  default.
 - `prompts/criticism_baseline.json` stores the 18 proposals and the two prompt
   endings separately so the experimental manipulation is explicit.
 - `requirements.txt` intentionally contains no `torch` dependency.
@@ -188,18 +189,21 @@ python3 chat_qwen.py --prompt "What is activation steering?" --show-reasoning
 
 ## Criticism-baseline batch
 
-Install vLLM in the RunPod environment, then generate 16 stochastic samples
-for each of the 18 natural-condition prompts (288 generations):
+Generate 16 stochastic samples for each of the 18 natural-condition prompts
+(288 generations) using the existing PyTorch/Transformers environment:
 
 ```bash
-python3 -m pip install vllm
-python3 batch_qwen.py
+python3 batch_qwen.py --batch-size 8
 ```
 
-The runner gives all prompt-condition pairs to one dynamically batched vLLM
-call. It writes one self-contained JSON object per sample to a timestamped file
-under `outputs/`. Each record includes the prompt metadata, exact user prompt,
-response, any model-emitted reasoning, and all generation settings.
+`--batch-size` is the number of samples generated simultaneously. For example,
+use `--batch-size 4` if 8 exceeds GPU memory, or try `--batch-size 16` if the GPU
+has enough headroom. The model is loaded only once, and the runner processes
+every prompt in successive manual mini-batches.
+
+The runner writes one self-contained JSON object per sample to a timestamped
+file under `outputs/`. Each record includes the prompt metadata, exact user
+prompt, response, any model-emitted reasoning, and all generation settings.
 
 Run both prompt endings for 576 total generations with:
 
