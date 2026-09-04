@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any, Sequence, TextIO
 
 
-DEFAULT_MODEL = "Qwen/Qwen3-4B-Thinking-2507"
+DEFAULT_MODEL = "Qwen/Qwen3.5-4B"
 DEFAULT_SYSTEM_PROMPT = "You are a helpful research assistant."
 DEFAULT_REASONING_END_MARKER = "</think>"
 

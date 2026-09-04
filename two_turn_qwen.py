@@ -189,7 +189,7 @@ def run(args: argparse.Namespace) -> int:
         )
         followup = requests[0]
         model_name = source_setting(
-            args, source_config, "model", "Qwen/Qwen3-4B-Thinking-2507"
+            args, source_config, "model", "Qwen/Qwen3.5-4B"
         )
         system_prompt = source_setting(
             args,

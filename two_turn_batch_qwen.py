@@ -354,7 +354,7 @@ def run(args: argparse.Namespace) -> int:
         )[0]
         model_name = common_source_setting(
             source_turns, name="model", override=args.model,
-            fallback="Qwen/Qwen3-4B-Thinking-2507",
+            fallback="Qwen/Qwen3.5-4B",
         )
         system_prompt = common_source_setting(
             source_turns, name="system_prompt", override=args.system_prompt,

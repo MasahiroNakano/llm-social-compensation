@@ -5,7 +5,7 @@ interpretability experiments.
 
 The first milestone is only an environment smoke test: install the lightweight
 Hugging Face dependencies without replacing the PyTorch/CUDA build supplied by
-the RunPod PyTorch image, then load an official Qwen 3 4B model and generate one
+the RunPod PyTorch image, then load the official Qwen3.5 4B model and generate one
 response.
 
 The provided social-compensation research plan is preserved in
@@ -33,9 +33,9 @@ analysis code will be added after this basic GPU/model setup is confirmed.
 - `setup.sh` checks Python, the preinstalled PyTorch build, CUDA visibility, and
   then installs only `transformers` and `accelerate`.
 - `hello_qwen.py` downloads and runs
-  [`Qwen/Qwen3-4B-Instruct-2507`](https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507)
-  by default.
-- `hello_qwen_reasoning.py` runs one prompt with the Qwen thinking checkpoint
+  [`Qwen/Qwen3.5-4B`](https://huggingface.co/Qwen/Qwen3.5-4B) in non-thinking
+  mode by default.
+- `hello_qwen_reasoning.py` runs one prompt with Qwen3.5's default thinking mode
   and separates the model-emitted reasoning from its final answer.
 - `chat_qwen.py` provides a reusable Python interface and an interactive,
   multi-turn chat with optional reasoning display.
@@ -129,15 +129,15 @@ python3 hello_qwen.py \
 Use another compatible Hugging Face model:
 
 ```bash
-python3 hello_qwen.py --model Qwen/Qwen3-4B
+python3 hello_qwen.py --model Qwen/Qwen3.5-4B
 ```
 
-The default is the non-thinking 4B instruct checkpoint because this first test
-only needs to verify ordinary chat generation. The model is configurable so a
-reasoning-capable checkpoint can be used in later experiments.
-The official model card reports 4.0B parameters and requires
-`transformers>=4.51.0`; the repository pins the compatible Transformers 4.x
-major series for a conservative first setup.
+The default is the unified Qwen3.5 4B checkpoint with thinking disabled in the
+chat template because this first test only needs to verify ordinary chat
+generation. The reasoning and experiment runners use the same checkpoint's
+default thinking mode. The official model card reports a 4B language model and
+requires a recent Transformers release; the repository pins the compatible
+Transformers 5.x major series.
 
 ## Interactive chat and reusable results
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate many Qwen3 Thinking answers in one vLLM request.
+"""Generate many Qwen3.5 Thinking answers in one vLLM request.
 
 By default, the script samples 50 answers to the same prompt and writes a
 timestamped CSV/Markdown pair under ``outputs/``. The reasoning trace exposed
@@ -21,7 +21,7 @@ from io import StringIO
 from pathlib import Path
 from typing import Any, Sequence
 
-DEFAULT_MODEL = "Qwen/Qwen3-4B-Thinking-2507"
+DEFAULT_MODEL = "Qwen/Qwen3.5-4B"
 DEFAULT_PROMPT = (
     "A bat and a ball cost $1.10 in total. The bat costs $1.00 more than the "
     "ball. How much does the ball cost?"

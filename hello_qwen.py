@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run a minimal Hugging Face generation smoke test with an official Qwen 4B model.
+"""Run a minimal Hugging Face generation smoke test with Qwen3.5 4B.
 
 PyTorch is expected to come from the RunPod PyTorch image. This script does not
 install or modify PyTorch.
@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-DEFAULT_MODEL = "Qwen/Qwen3-4B-Instruct-2507"
+DEFAULT_MODEL = "Qwen/Qwen3.5-4B"
 DEFAULT_PROMPT = (
     "In two concise sentences, explain why sanity checks matter in LLM safety "
     "experiments."
@@ -23,7 +23,7 @@ DEFAULT_PROMPT = (
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Download and run a small generation test with Qwen 3 4B."
+        description="Download and run a small generation test with Qwen3.5 4B."
     )
     parser.add_argument(
         "--model",
@@ -253,6 +253,7 @@ def main() -> int:
     model_inputs = tokenizer.apply_chat_template(
         messages,
         add_generation_prompt=True,
+        enable_thinking=False,
         tokenize=True,
         return_dict=True,
         return_tensors="pt",

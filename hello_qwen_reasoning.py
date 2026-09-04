@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run Qwen3 Thinking and print its reasoning trace and final answer separately.
+"""Run Qwen3.5 Thinking and print its reasoning trace and final answer separately.
 
 The reasoning trace printed here is text emitted by the model. It should not be
 assumed to be a complete or faithful description of the model's internal
@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 
-DEFAULT_MODEL = "Qwen/Qwen3-4B-Thinking-2507"
+DEFAULT_MODEL = "Qwen/Qwen3.5-4B"
 DEFAULT_PROMPT = (
     "A bat and a ball cost $1.10 in total. The bat costs $1.00 more than the "
     "ball. How much does the ball cost?"

@@ -49,7 +49,7 @@ if torch.cuda.is_available():
 else:
     print("CUDA:    not available")
     print(
-        "Warning: setup can finish, but the default Qwen 4B smoke test expects a GPU. "
+        "Warning: setup can finish, but the default Qwen3.5 4B smoke test expects a GPU. "
         "Use --allow-cpu only for a very slow CPU test."
     )
 PY
