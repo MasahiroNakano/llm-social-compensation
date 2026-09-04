@@ -187,6 +187,36 @@ def batch_ranges(total: int, batch_size: int) -> Iterator[tuple[int, int]]:
         yield start, min(start + batch_size, total)
 
 
+def format_duration(seconds: float) -> str:
+    """Format an elapsed duration as hours, minutes, and seconds."""
+
+    total_seconds = max(0, int(seconds))
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, remaining_seconds = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{remaining_seconds:02d}"
+
+
+def sample_progress(*, total: int, initial: int, script_started: float) -> Any:
+    """Create the sample progress bar without requiring tqdm for dry runs/tests."""
+
+    try:
+        from tqdm.auto import tqdm
+    except ImportError as exc:
+        raise RuntimeError("Missing dependency: tqdm. Run ./setup.sh first.") from exc
+
+    progress = tqdm(
+        total=total,
+        initial=initial,
+        desc="Generating",
+        unit="sample",
+        dynamic_ncols=True,
+    )
+    progress.set_postfix_str(
+        f"total elapsed {format_duration(time.perf_counter() - script_started)}"
+    )
+    return progress
+
+
 def output_path(requested: Path | None, *, resume: bool) -> Path:
     """Resolve a new output or an explicitly selected resumable output."""
 
@@ -447,6 +477,7 @@ def parse_tokens(
 
 
 def run(args: argparse.Namespace) -> int:
+    script_started = time.perf_counter()
     validate_args(args)
     try:
         prompt_set = load_prompt_set(args.prompts)
@@ -470,6 +501,10 @@ def run(args: argparse.Namespace) -> int:
     if args.dry_run:
         print("\nFirst user prompt:\n")
         print(requests[0].prompt)
+        print(
+            "\nTotal run time: "
+            f"{format_duration(time.perf_counter() - script_started)}"
+        )
         return 0
 
     prompt_file_hash = hashlib.sha256(args.prompts.read_bytes()).hexdigest()
@@ -521,6 +556,10 @@ def run(args: argparse.Namespace) -> int:
             )
         if len(completed_ids) == total_samples:
             print(f"Nothing to do; the run is already complete: {destination}")
+            print(
+                "Total run time: "
+                f"{format_duration(time.perf_counter() - script_started)}"
+            )
             return 0
 
     try:
@@ -548,8 +587,20 @@ def run(args: argparse.Namespace) -> int:
     torch.cuda.synchronize()
     started = time.perf_counter()
     try:
+        progress = sample_progress(
+            total=total_samples,
+            initial=completed,
+            script_started=script_started,
+        )
+    except RuntimeError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    try:
         output_mode = "a" if args.resume else "x"
-        with destination.open(output_mode, encoding="utf-8") as output_file:
+        with (
+            destination.open(output_mode, encoding="utf-8") as output_file,
+            progress,
+        ):
             for request in requests:
                 for start, end in batch_ranges(
                     args.samples_per_prompt, args.batch_size
@@ -565,11 +616,11 @@ def run(args: argparse.Namespace) -> int:
                     torch.manual_seed(batch_seed)
                     torch.cuda.manual_seed_all(batch_seed)
                     current_size = end - start
-                    print(
-                        f"{request.prompt_id}/{request.condition}: samples "
-                        f"{start + 1}-{end}/{args.samples_per_prompt} "
-                        f"({completed}/{total_samples} complete)"
+                    progress.set_description(
+                        f"{request.prompt_id}/{request.condition} "
+                        f"samples {start + 1}-{end}/{args.samples_per_prompt}"
                     )
+                    completed_before_batch = completed
                     inputs = prepare_inputs(
                         tokenizer,
                         request=request,
@@ -609,6 +660,12 @@ def run(args: argparse.Namespace) -> int:
                         records_written += 1
                         incomplete_reasoning += not parsed["reasoning_complete"]
                     output_file.flush()
+                    progress.set_postfix_str(
+                        "total elapsed "
+                        f"{format_duration(time.perf_counter() - script_started)}",
+                        refresh=False,
+                    )
+                    progress.update(completed - completed_before_batch)
                     del inputs, sequences, generated_rows
     except RuntimeError as exc:
         if "out of memory" not in str(exc).lower():
@@ -622,6 +679,7 @@ def run(args: argparse.Namespace) -> int:
 
     torch.cuda.synchronize()
     elapsed = time.perf_counter() - started
+    total_elapsed = time.perf_counter() - script_started
     throughput = total_generated_tokens / elapsed if elapsed > 0 else 0.0
     print("\n=== Criticism baseline complete ===")
     print(f"Samples complete: {completed}/{total_samples}")
@@ -629,6 +687,7 @@ def run(args: argparse.Namespace) -> int:
     print(f"Batch size:       {args.batch_size}")
     print(f"Tokens this run:  {total_generated_tokens}")
     print(f"Generation time:  {elapsed:.2f} s")
+    print(f"Total run time:    {format_duration(total_elapsed)} ({total_elapsed:.2f} s)")
     print(f"Throughput:       {throughput:.2f} tokens/s")
     print(f"Output:           {destination}")
     if incomplete_reasoning:

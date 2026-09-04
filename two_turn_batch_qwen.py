@@ -18,9 +18,11 @@ from batch_qwen import (
     batch_ranges,
     build_requests,
     eos_token_ids,
+    format_duration,
     load_prompt_set,
     load_runtime,
     parse_tokens,
+    sample_progress,
     trim_generated_tokens,
 )
 from hello_qwen_reasoning import DEFAULT_REASONING_END_MARKER, input_device_for
@@ -333,6 +335,7 @@ def repeated_messages(
 
 
 def run(args: argparse.Namespace) -> int:
+    script_started = time.perf_counter()
     try:
         validate_args(args)
         source_path = args.source_jsonl.expanduser().resolve()
@@ -400,6 +403,10 @@ def run(args: argparse.Namespace) -> int:
             )
         print("\nFixed second-turn prompt:\n")
         print(followup.prompt)
+        print(
+            "\nTotal run time: "
+            f"{format_duration(time.perf_counter() - script_started)}"
+        )
         return 0
 
     source_hash = hashlib.sha256(source_path.read_bytes()).hexdigest()
@@ -454,6 +461,10 @@ def run(args: argparse.Namespace) -> int:
 
     if len(completed_ids) == total_samples:
         print(f"Nothing to do; all {total_samples} samples exist in {destination}.")
+        print(
+            "Total run time: "
+            f"{format_duration(time.perf_counter() - script_started)}"
+        )
         return 0
     if args.resume:
         print(f"Resume found {len(completed_ids)}/{total_samples} completed samples.")
@@ -483,7 +494,21 @@ def run(args: argparse.Namespace) -> int:
     torch.cuda.synchronize()
     started = time.perf_counter()
     try:
-        with destination.open("a" if args.resume else "x", encoding="utf-8") as output_file:
+        progress = sample_progress(
+            total=total_samples,
+            initial=completed,
+            script_started=script_started,
+        )
+    except RuntimeError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    try:
+        with (
+            destination.open(
+                "a" if args.resume else "x", encoding="utf-8"
+            ) as output_file,
+            progress,
+        ):
             for source_index, source_turn in enumerate(source_turns, start=1):
                 for start, end in batch_ranges(args.samples_per_source, args.batch_size):
                     batch_ids = {
@@ -508,12 +533,11 @@ def run(args: argparse.Namespace) -> int:
                     torch.manual_seed(batch_seed)
                     torch.cuda.manual_seed_all(batch_seed)
                     current_size = end - start
-                    print(
+                    progress.set_description(
                         f"Source {source_index}/{len(source_turns)} "
-                        f"({source_turn.record['sample_id']}): follow-up samples "
-                        f"{start + 1}-{end}/{args.samples_per_source} "
-                        f"({completed}/{total_samples} complete)"
+                        f"follow-ups {start + 1}-{end}/{args.samples_per_source}"
                     )
+                    completed_before_batch = completed
                     message_batches = repeated_messages(
                         source_turn,
                         followup_prompt=followup.prompt,
@@ -592,6 +616,12 @@ def run(args: argparse.Namespace) -> int:
                         completed += 1
                         records_written += 1
                     output_file.flush()
+                    progress.set_postfix_str(
+                        "total elapsed "
+                        f"{format_duration(time.perf_counter() - script_started)}",
+                        refresh=False,
+                    )
+                    progress.update(completed - completed_before_batch)
                     del inputs, sequences, generated_rows
     except RuntimeError as exc:
         if "out of memory" not in str(exc).lower():
@@ -605,12 +635,14 @@ def run(args: argparse.Namespace) -> int:
 
     torch.cuda.synchronize()
     elapsed = time.perf_counter() - started
+    total_elapsed = time.perf_counter() - script_started
     rate = total_generated_tokens / elapsed if elapsed else 0.0
     print("\n=== Complete ===")
     print(f"New records:      {records_written}")
     print(f"Total records:    {completed}/{total_samples}")
     print(f"Generated tokens: {total_generated_tokens}")
     print(f"Generation time:  {elapsed:.2f} s")
+    print(f"Total run time:    {format_duration(total_elapsed)} ({total_elapsed:.2f} s)")
     print(f"Throughput:       {rate:.2f} tokens/s")
     print(f"Output:           {destination}")
     return 0

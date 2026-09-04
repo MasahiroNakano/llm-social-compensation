@@ -3,3 +3,4 @@
 # PyTorch build supplied by the pod remains untouched.
 transformers>=4.51.0,<5.0.0
 accelerate>=1.0.0,<2.0.0
+tqdm>=4.66.0,<5.0.0

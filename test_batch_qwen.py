@@ -12,6 +12,7 @@ from batch_qwen import (
     batch_ranges,
     build_requests,
     expected_samples,
+    format_duration,
     load_completed_samples,
     load_prompt_set,
     output_path,
@@ -71,6 +72,11 @@ class PromptSetTests(unittest.TestCase):
 
     def test_manual_batch_ranges_include_short_final_batch(self) -> None:
         self.assertEqual(list(batch_ranges(16, 6)), [(0, 6), (6, 12), (12, 16)])
+
+    def test_elapsed_duration_uses_fixed_width_clock_format(self) -> None:
+        self.assertEqual(format_duration(0), "00:00:00")
+        self.assertEqual(format_duration(65.9), "00:01:05")
+        self.assertEqual(format_duration(3_661.2), "01:01:01")
 
     def test_batch_seed_is_stable_and_batch_specific(self) -> None:
         request = build_requests(
