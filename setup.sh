@@ -83,12 +83,12 @@ if not is_torch_available():
         "versions are incompatible. Check requirements.txt and rerun setup.sh."
     )
 
-from transformers import AutoModelForCausalLM  # noqa: E402
+from transformers import AutoModelForCausalLM, Qwen3_5ForCausalLM  # noqa: E402
 
-if AutoModelForCausalLM is None:
-    raise SystemExit("Transformers did not expose AutoModelForCausalLM.")
+if AutoModelForCausalLM is None or Qwen3_5ForCausalLM is None:
+    raise SystemExit("Transformers did not expose the required Qwen3.5 classes.")
 
-print("transformers PyTorch backend: available")
+print("transformers PyTorch/Qwen3.5 backend: available")
 PY
 
 echo
