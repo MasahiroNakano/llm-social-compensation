@@ -205,6 +205,30 @@ The runner writes one self-contained JSON object per sample to a timestamped
 file under `outputs/`. Each record includes the prompt metadata, exact user
 prompt, response, any model-emitted reasoning, and all generation settings.
 
+For a resumable run, choose the output filename explicitly:
+
+```bash
+python3 batch_qwen.py \
+  --samples-per-prompt 16 \
+  --batch-size 8 \
+  --output outputs/criticism_natural.jsonl
+```
+
+If the process is interrupted, repeat the same command with `--resume`:
+
+```bash
+python3 batch_qwen.py \
+  --samples-per-prompt 16 \
+  --batch-size 8 \
+  --output outputs/criticism_natural.jsonl \
+  --resume
+```
+
+Resume mode validates every existing row and the model, prompt dataset, sample
+count, seed, and sampling settings before appending only missing sample IDs. You
+may lower `--batch-size` when resuming after an out-of-memory error; the output
+records which batch size generated each sample.
+
 Run both prompt endings for 576 total generations with:
 
 ```bash

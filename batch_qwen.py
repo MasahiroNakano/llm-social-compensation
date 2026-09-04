@@ -88,6 +88,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Validate and preview the experiment without loading the model.",
     )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Append only missing samples to an existing --output JSONL file.",
+    )
     return parser.parse_args(argv)
 
 
@@ -182,9 +187,11 @@ def batch_ranges(total: int, batch_size: int) -> Iterator[tuple[int, int]]:
         yield start, min(start + batch_size, total)
 
 
-def output_path(requested: Path | None) -> Path:
-    """Choose a timestamped default and refuse to overwrite an existing run."""
+def output_path(requested: Path | None, *, resume: bool) -> Path:
+    """Resolve a new output or an explicitly selected resumable output."""
 
+    if resume and requested is None:
+        raise ValueError("--resume requires an explicit --output path.")
     if requested is None:
         timestamp = datetime.now().astimezone().strftime("%Y-%m-%d_%H-%M-%S_%f")
         path = ROOT_DIR / "outputs" / f"criticism_baseline_{timestamp}.jsonl"
@@ -193,9 +200,111 @@ def output_path(requested: Path | None) -> Path:
         if not path.is_absolute():
             path = Path.cwd() / path
     path = path.resolve()
-    if path.exists():
+    if resume and not path.exists():
+        raise ValueError(f"Cannot resume because the output does not exist: {path}")
+    if not resume and path.exists():
         raise FileExistsError(f"Refusing to overwrite existing output: {path}")
     return path
+
+
+def sample_id(request: PromptRequest, sample_number: int) -> str:
+    return f"{request.prompt_id}.{request.condition}.s{sample_number:02d}"
+
+
+def expected_samples(
+    requests: Sequence[PromptRequest], samples_per_prompt: int
+) -> dict[str, tuple[PromptRequest, int]]:
+    """Map every intended sample ID to its prompt and one-based sample number."""
+
+    return {
+        sample_id(request, sample_number): (request, sample_number)
+        for request in requests
+        for sample_number in range(1, samples_per_prompt + 1)
+    }
+
+
+def load_completed_samples(
+    path: Path,
+    *,
+    expected: dict[str, tuple[PromptRequest, int]],
+    required_config: dict[str, Any],
+) -> tuple[set[str], set[int]]:
+    """Validate a partial JSONL run and return its completed sample IDs."""
+
+    completed: set[str] = set()
+    previous_batch_sizes: set[int] = set()
+    with path.open(encoding="utf-8") as input_file:
+        for line_number, line in enumerate(input_file, start=1):
+            if not line.strip():
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    f"Cannot resume: invalid JSON on output line {line_number}: {exc}"
+                ) from exc
+
+            existing_id = record.get("sample_id")
+            if not isinstance(existing_id, str):
+                raise ValueError(
+                    f"Cannot resume: output line {line_number} has no sample_id."
+                )
+            if existing_id in completed:
+                raise ValueError(f"Cannot resume: duplicate sample_id {existing_id!r}.")
+            if existing_id not in expected:
+                raise ValueError(
+                    f"Cannot resume: unexpected sample_id {existing_id!r}. "
+                    "Use the same prompts, condition, and sample count."
+                )
+
+            request, number = expected[existing_id]
+            expected_fields = {
+                "prompt_id": request.prompt_id,
+                "condition": request.condition,
+                "sample_number": number,
+                "prompt": request.prompt,
+            }
+            for key, value in expected_fields.items():
+                if record.get(key) != value:
+                    raise ValueError(
+                        f"Cannot resume: {key!r} differs on output line {line_number}."
+                    )
+
+            saved_config = record.get("generation_config")
+            if not isinstance(saved_config, dict):
+                raise ValueError(
+                    f"Cannot resume: output line {line_number} has no "
+                    "generation_config object."
+                )
+            for key, value in required_config.items():
+                saved_value = saved_config.get(key)
+                if key == "reasoning_end_marker" and key not in saved_config:
+                    # Outputs made by the pre-resume runner always used this default
+                    # but did not record it explicitly.
+                    saved_value = DEFAULT_REASONING_END_MARKER
+                if saved_value != value:
+                    raise ValueError(
+                        f"Cannot resume: generation setting {key!r} differs "
+                        f"on output line {line_number}."
+                    )
+            saved_batch_size = saved_config.get("batch_size")
+            if isinstance(saved_batch_size, int):
+                previous_batch_sizes.add(saved_batch_size)
+            completed.add(existing_id)
+    return completed, previous_batch_sizes
+
+
+def stable_batch_seed(
+    base_seed: int, request: PromptRequest, start: int, end: int
+) -> int:
+    """Derive a stable seed so an interrupted mini-batch can be regenerated."""
+
+    identity = (
+        f"criticism-baseline-v1:{base_seed}:{request.prompt_id}:"
+        f"{request.condition}:{start}:{end}"
+    )
+    digest = hashlib.sha256(identity.encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], "big") % (2**63 - 1)
 
 
 def load_runtime(args: argparse.Namespace) -> tuple[Any, Any, Any]:
@@ -363,27 +472,63 @@ def run(args: argparse.Namespace) -> int:
         print(requests[0].prompt)
         return 0
 
-    try:
-        destination = output_path(args.output)
-        torch, tokenizer, model = load_runtime(args)
-    except (FileExistsError, RuntimeError) as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        return 1
-
-    generation_config = {
+    prompt_file_hash = hashlib.sha256(args.prompts.read_bytes()).hexdigest()
+    required_config = {
         "backend": "pytorch_transformers",
         "model": args.model,
         "system_prompt": system_prompt,
         "samples_per_prompt": args.samples_per_prompt,
-        "batch_size": args.batch_size,
         "max_new_tokens": args.max_new_tokens,
         "temperature": args.temperature,
         "top_p": args.top_p,
         "seed": args.seed,
+        "reasoning_end_marker": args.reasoning_end_marker,
+        "prompt_file_sha256": prompt_file_hash,
+    }
+    generation_config = {
+        **required_config,
+        "batch_size": args.batch_size,
         "prompt_file": str(args.prompts.resolve()),
-        "prompt_file_sha256": hashlib.sha256(args.prompts.read_bytes()).hexdigest(),
+        "seed_strategy": "stable_prompt_batch_v1",
         "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
     }
+    intended = expected_samples(requests, args.samples_per_prompt)
+    completed_ids: set[str] = set()
+    previous_batch_sizes: set[int] = set()
+    try:
+        destination = output_path(args.output, resume=args.resume)
+        if args.resume:
+            completed_ids, previous_batch_sizes = load_completed_samples(
+                destination,
+                expected=intended,
+                required_config=required_config,
+            )
+    except (FileExistsError, OSError, ValueError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    if args.resume:
+        print(
+            f"Resume validation found {len(completed_ids)}/{total_samples} "
+            "completed samples."
+        )
+        if previous_batch_sizes and previous_batch_sizes != {args.batch_size}:
+            previous = ", ".join(str(size) for size in sorted(previous_batch_sizes))
+            print(
+                f"Batch size changed from {previous} to {args.batch_size}. "
+                "Completed sample IDs will be kept; missing samples will use the "
+                "new batch size."
+            )
+        if len(completed_ids) == total_samples:
+            print(f"Nothing to do; the run is already complete: {destination}")
+            return 0
+
+    try:
+        torch, tokenizer, model = load_runtime(args)
+    except RuntimeError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
     generation_options = {
         "do_sample": True,
         "temperature": args.temperature,
@@ -395,18 +540,30 @@ def run(args: argparse.Namespace) -> int:
     input_device = input_device_for(model)
     endings = eos_token_ids(model, tokenizer)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    completed = 0
+    completed = len(completed_ids)
+    records_written = 0
     total_generated_tokens = 0
     incomplete_reasoning = 0
 
     torch.cuda.synchronize()
     started = time.perf_counter()
     try:
-        with destination.open("x", encoding="utf-8") as output_file:
+        output_mode = "a" if args.resume else "x"
+        with destination.open(output_mode, encoding="utf-8") as output_file:
             for request in requests:
                 for start, end in batch_ranges(
                     args.samples_per_prompt, args.batch_size
                 ):
+                    batch_sample_ids = {
+                        sample_id(request, number)
+                        for number in range(start + 1, end + 1)
+                    }
+                    if batch_sample_ids <= completed_ids:
+                        continue
+
+                    batch_seed = stable_batch_seed(args.seed, request, start, end)
+                    torch.manual_seed(batch_seed)
+                    torch.cuda.manual_seed_all(batch_seed)
                     current_size = end - start
                     print(
                         f"{request.prompt_id}/{request.condition}: samples "
@@ -427,7 +584,11 @@ def run(args: argparse.Namespace) -> int:
 
                     for offset, row in enumerate(generated_rows, start=1):
                         sample_number = start + offset
+                        current_sample_id = sample_id(request, sample_number)
                         token_ids = trim_generated_tokens(row, endings)
+                        total_generated_tokens += len(token_ids)
+                        if current_sample_id in completed_ids:
+                            continue
                         parsed = parse_tokens(
                             token_ids,
                             tokenizer=tokenizer,
@@ -435,20 +596,19 @@ def run(args: argparse.Namespace) -> int:
                             eos_ids=endings,
                         )
                         record = {
-                            "sample_id": (
-                                f"{request.prompt_id}.{request.condition}."
-                                f"s{sample_number:02d}"
-                            ),
+                            "sample_id": current_sample_id,
                             **asdict(request),
                             "sample_number": sample_number,
+                            "batch_seed": batch_seed,
                             **parsed,
                             "generation_config": generation_config,
                         }
                         output_file.write(json.dumps(record, ensure_ascii=False) + "\n")
-                        output_file.flush()
+                        completed_ids.add(current_sample_id)
                         completed += 1
-                        total_generated_tokens += parsed["generated_tokens"]
+                        records_written += 1
                         incomplete_reasoning += not parsed["reasoning_complete"]
+                    output_file.flush()
                     del inputs, sequences, generated_rows
     except RuntimeError as exc:
         if "out of memory" not in str(exc).lower():
@@ -464,9 +624,10 @@ def run(args: argparse.Namespace) -> int:
     elapsed = time.perf_counter() - started
     throughput = total_generated_tokens / elapsed if elapsed > 0 else 0.0
     print("\n=== Criticism baseline complete ===")
-    print(f"Samples:          {completed}")
+    print(f"Samples complete: {completed}/{total_samples}")
+    print(f"Written this run: {records_written}")
     print(f"Batch size:       {args.batch_size}")
-    print(f"Generated tokens: {total_generated_tokens}")
+    print(f"Tokens this run:  {total_generated_tokens}")
     print(f"Generation time:  {elapsed:.2f} s")
     print(f"Throughput:       {throughput:.2f} tokens/s")
     print(f"Output:           {destination}")

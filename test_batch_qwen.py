@@ -2,14 +2,21 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+from tempfile import TemporaryDirectory
 import unittest
 
 from batch_qwen import (
     DEFAULT_PROMPTS,
     batch_ranges,
     build_requests,
+    expected_samples,
+    load_completed_samples,
     load_prompt_set,
+    output_path,
     parse_tokens,
+    stable_batch_seed,
 )
 
 
@@ -64,6 +71,60 @@ class PromptSetTests(unittest.TestCase):
 
     def test_manual_batch_ranges_include_short_final_batch(self) -> None:
         self.assertEqual(list(batch_ranges(16, 6)), [(0, 6), (6, 12), (12, 16)])
+
+    def test_batch_seed_is_stable_and_batch_specific(self) -> None:
+        request = build_requests(
+            self.prompt_set,
+            condition="natural",
+            prompt_ids={"L4_13"},
+        )[0]
+        self.assertEqual(
+            stable_batch_seed(42, request, 0, 8),
+            stable_batch_seed(42, request, 0, 8),
+        )
+        self.assertNotEqual(
+            stable_batch_seed(42, request, 0, 8),
+            stable_batch_seed(42, request, 8, 16),
+        )
+
+    def test_resume_loads_and_validates_completed_sample(self) -> None:
+        request = build_requests(
+            self.prompt_set,
+            condition="natural",
+            prompt_ids={"L4_13"},
+        )[0]
+        intended = expected_samples([request], 2)
+        required_config = {
+            "backend": "pytorch_transformers",
+            "model": "test/model",
+            "samples_per_prompt": 2,
+        }
+        record = {
+            "sample_id": "L4_13.natural.s01",
+            "prompt_id": request.prompt_id,
+            "condition": request.condition,
+            "sample_number": 1,
+            "prompt": request.prompt,
+            "generation_config": {**required_config, "batch_size": 8},
+        }
+        with TemporaryDirectory() as temporary_directory:
+            path = Path(temporary_directory) / "partial.jsonl"
+            path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+            completed, batch_sizes = load_completed_samples(
+                path,
+                expected=intended,
+                required_config=required_config,
+            )
+        self.assertEqual(completed, {"L4_13.natural.s01"})
+        self.assertEqual(batch_sizes, {8})
+
+    def test_resume_requires_explicit_existing_output(self) -> None:
+        with self.assertRaisesRegex(ValueError, "requires an explicit"):
+            output_path(None, resume=True)
+        with TemporaryDirectory() as temporary_directory:
+            missing = Path(temporary_directory) / "missing.jsonl"
+            with self.assertRaisesRegex(ValueError, "does not exist"):
+                output_path(missing, resume=True)
 
     def test_tokens_with_reasoning_are_split(self) -> None:
         parsed = parse_tokens(
