@@ -37,7 +37,7 @@ from two_turn_qwen import validate_generation_settings
 
 ROOT_DIR = Path(__file__).resolve().parent
 DEFAULT_PROMPTS = ROOT_DIR / "prompts" / "criticism_baseline_selection.json"
-DEFAULT_FOLLOWUP_PROMPT_IDS = ("B7")
+DEFAULT_FOLLOWUP_PROMPT_IDS = ("B3", "B7")
 FIRST_PROMPT_ID = "L4_15"
 INTERVENTION_VERSION = "l4_15_verdict_only_v1"
 
