@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterator, Sequence
 
-from smoke_test.hello_qwen_reasoning import (
+from src.qwen_runtime import (
     DEFAULT_MODEL,
     DEFAULT_REASONING_END_MARKER,
     choose_dtype,

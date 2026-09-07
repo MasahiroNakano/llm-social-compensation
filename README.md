@@ -1,16 +1,23 @@
+# Manual notes
+
+note that, `setup.sh` currently has been tested for Runpod environment, 
+- CUDA version 12.8, 
+- RTX 4090, 
+- Runpod Pytorch 2.4.0
+- runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
+
+For SLURM environment, see ~/using transformer in slurm.sh
+----
+
 # LLM Safety & Interpretability Experiments
 
-A deliberately small, RunPod-first starter repository for LLM safety and
-interpretability experiments.
+A resumable two-phase Qwen3.5 4B experiment for measuring how a model's previous
+recommendation affects its evaluation of a second proposal. Both phases use
+temperature 1.0 and are designed to run sequentially on one GPU.
 
-The first milestone is only an environment smoke test: install the lightweight
-Hugging Face dependencies without replacing the PyTorch/CUDA build supplied by
-the RunPod PyTorch image, then load the official Qwen3.5 4B model and generate one
-response.
-
-The provided social-compensation research plan is preserved in
-[`PROJECT_PLAN.md`](PROJECT_PLAN.md). Experiment runners, datasets, judges, and
-analysis code will be added after this basic GPU/model setup is confirmed.
+The original social-compensation research plan is preserved in
+[`PROJECT_PLAN.md`](PROJECT_PLAN.md); the current runnable experiment is defined
+by the two phase scripts and `prompts/phase1_four_prompts.json`.
 
 ## Repository contents
 
@@ -19,33 +26,44 @@ analysis code will be added after this basic GPU/model setup is confirmed.
 ├── .gitignore
 ├── PROJECT_PLAN.md
 ├── README.md
-├── batch_qwen.py
-├── chat_qwen.py
-├── hello_qwen.py
-├── hello_qwen_reasoning.py
 ├── jsonl_to_markdown.py
 ├── prompts/
-│   └── criticism_baseline.json
+│   └── phase1_four_prompts.json
 ├── requirements.txt
+├── scripts/
+│   ├── matched_verdict_phase2_qwen.py
+│   ├── matched_verdict_phase2_qwen_exp2.py
+│   ├── phase1_single_turn.py
+│   ├── phase2_two_turns.py
+│   └── smoke_test/
+│       ├── batch_inference.py
+│       ├── chat_qwen.py
+│       ├── hello_qwen.py
+│       └── hello_qwen_reasoning.py
+├── src/
+│   ├── batch_qwen.py
+│   ├── qwen_runtime.py
+│   └── two_turn_batch_qwen.py
 └── setup.sh
 ```
 
 - `setup.sh` checks Python, the preinstalled PyTorch build, CUDA visibility, and
   then installs only `transformers` and `accelerate`.
-- `hello_qwen.py` downloads and runs
+- `scripts/smoke_test/hello_qwen.py` downloads and runs
   [`Qwen/Qwen3.5-4B`](https://huggingface.co/Qwen/Qwen3.5-4B) in non-thinking
   mode by default.
-- `hello_qwen_reasoning.py` runs one prompt with Qwen3.5's default thinking mode
-  and separates the model-emitted reasoning from its final answer.
-- `chat_qwen.py` provides a reusable Python interface and an interactive,
-  multi-turn chat with optional reasoning display.
-- `batch_qwen.py` runs the structured criticism-baseline prompt set in manual
-  PyTorch/Transformers mini-batches and samples 16 responses per prompt by
-  default.
+- `scripts/smoke_test/hello_qwen_reasoning.py` runs one prompt with Qwen3.5's default
+  thinking mode and separates the model-emitted reasoning from its final answer.
+- `scripts/smoke_test/chat_qwen.py` provides a reusable Python interface and an
+  interactive, multi-turn chat with optional reasoning display.
+- `scripts/phase1_single_turn.py` samples the four proposals 16 times each.
+- `scripts/phase2_two_turns.py` runs all 12 ordered pairs, sampling eight
+  second-turn responses after each saved first-turn response.
+- `src/batch_qwen.py` and `src/two_turn_batch_qwen.py` are the canonical engines
+  behind the two phase runners.
 - `jsonl_to_markdown.py` converts batch JSONL results into readable Markdown,
   with responses shown directly and reasoning traces in collapsible sections.
-- `prompts/criticism_baseline.json` stores the 18 proposals and the two prompt
-  endings separately so the experimental manipulation is explicit.
+- `prompts/phase1_four_prompts.json` stores P1-P4 and the two prompt endings.
 - `requirements.txt` intentionally contains no `torch` dependency.
 - `PROJECT_PLAN.md` is the supplied research plan, unchanged.
 
@@ -61,7 +79,7 @@ cd YOUR_REPOSITORY
 
 chmod +x setup.sh
 ./setup.sh
-python3 hello_qwen.py
+python3 -m scripts.smoke_test.hello_qwen
 ```
 
 A successful run ends with:
@@ -107,20 +125,20 @@ PYTHON_BIN=python3.11 ./setup.sh
 Show all options:
 
 ```bash
-python3 hello_qwen.py --help
+python3 -m scripts.smoke_test.hello_qwen --help
 ```
 
 Use a custom prompt:
 
 ```bash
-python3 hello_qwen.py \
+python3 -m scripts.smoke_test.hello_qwen \
   --prompt "Give one example of a confound in a sequential LLM evaluation."
 ```
 
 Enable sampling:
 
 ```bash
-python3 hello_qwen.py \
+python3 -m scripts.smoke_test.hello_qwen \
   --temperature 0.7 \
   --top-p 0.9 \
   --seed 42
@@ -129,7 +147,7 @@ python3 hello_qwen.py \
 Use another compatible Hugging Face model:
 
 ```bash
-python3 hello_qwen.py --model Qwen/Qwen3.5-4B
+python3 -m scripts.smoke_test.hello_qwen --model Qwen/Qwen3.5-4B
 ```
 
 The default is the unified Qwen3.5 4B checkpoint with thinking disabled in the
@@ -145,7 +163,7 @@ RunPod image.
 Start a normal multi-turn chat with the reasoning-capable checkpoint:
 
 ```bash
-python3 chat_qwen.py
+python3 -m scripts.smoke_test.chat_qwen
 ```
 
 Interactive input is multiline. Press Enter to add another line, then enter
@@ -164,7 +182,7 @@ Generated transcripts are ignored by Git. To choose a `.md` or `.txt` path
 yourself, use:
 
 ```bash
-python3 chat_qwen.py --output-file outputs/my_chat.md
+python3 -m scripts.smoke_test.chat_qwen --output-file outputs/my_chat.md
 ```
 
 An existing file is never overwritten.
@@ -172,7 +190,7 @@ An existing file is never overwritten.
 In a Python session or notebook, generation and printing are separate:
 
 ```python
-from chat_qwen import LLM, print_result
+from scripts.smoke_test.chat_qwen import LLM, print_result
 
 output = LLM("Why do control experiments matter?")
 
@@ -188,79 +206,48 @@ accessed directly.
 For one terminal prompt, use:
 
 ```bash
-python3 chat_qwen.py --prompt "What is activation steering?" --show-reasoning
+python3 -m scripts.smoke_test.chat_qwen \
+  --prompt "What is activation steering?" \
+  --show-reasoning
 ```
 
-## Criticism-baseline batch
+## Run the experiment
 
-Generate 16 stochastic samples for each of the 18 natural-condition prompts
-(288 generations) using the existing PyTorch/Transformers environment:
+Phase 1 generates 16 independent responses for each of P1-P4, for 64 total
+generations. Its deterministic output is
+`outputs/qwen35_phase1_single_turn.jsonl`.
 
 ```bash
-python3 batch_qwen.py --batch-size 8
+python3 scripts/phase1_single_turn.py
 ```
 
-`--batch-size` is the number of samples generated simultaneously. For example,
-use `--batch-size 4` if 8 exceeds GPU memory, or try `--batch-size 16` if the GPU
-has enough headroom. The model is loaded only once, and the runner processes
-every prompt in successive manual mini-batches.
-
-The runner writes one self-contained JSON object per sample to a timestamped
-file under `outputs/`. Each record includes the prompt metadata, exact user
-prompt, response, any model-emitted reasoning, and all generation settings.
-
-For a resumable run, choose the output filename explicitly:
+After phase 1 completes, phase 2 runs all 12 directed pairs. It loads the model
+once and creates one JSONL file per pair under
+`outputs/phase2_two_turns_temperature_1/`.
 
 ```bash
-python3 batch_qwen.py \
-  --samples-per-prompt 16 \
-  --batch-size 8 \
-  --output outputs/criticism_natural.jsonl
+python3 scripts/phase2_two_turns.py
 ```
 
-If the process is interrupted, repeat the same command with `--resume`:
+If either process is interrupted, rerun that phase with `--resume`:
 
 ```bash
-python3 batch_qwen.py \
-  --samples-per-prompt 16 \
-  --batch-size 8 \
-  --output outputs/criticism_natural.jsonl \
-  --resume
+python3 scripts/phase1_single_turn.py --resume
+python3 scripts/phase2_two_turns.py --resume
 ```
 
-Resume mode validates every existing row and the model, prompt dataset, sample
-count, seed, and sampling settings before appending only missing sample IDs. You
-may lower `--batch-size` when resuming after an out-of-memory error; the output
-records which batch size generated each sample.
-
-Run both prompt endings for 576 total generations with:
-
-```bash
-python3 batch_qwen.py --condition both
-```
-
-Validate the dataset and preview the first prompt without loading a model:
-
-```bash
-python3 batch_qwen.py --dry-run
-```
-
-For a minimal GPU smoke test:
-
-```bash
-python3 batch_qwen.py \
-  --prompt-id L4_13 \
-  --samples-per-prompt 1 \
-  --max-new-tokens 512 \
-  --output outputs/criticism_smoke_test.jsonl
-```
+Resume mode validates existing records, appends only missing sample IDs, and
+repairs an incomplete final JSONL line left by abrupt job termination. Use
+`--batch-size 4` if the default batch size of 8 exceeds GPU memory. Both scripts
+also support `--dry-run`; phase 2 additionally supports repeatable selectors
+such as `--pair P1:P2`.
 
 ## Convert batch output to Markdown
 
 Convert one JSONL file to a same-named Markdown file beside it:
 
 ```bash
-python3 jsonl_to_markdown.py outputs/criticism_natural.jsonl
+python3 jsonl_to_markdown.py outputs/qwen35_phase1_single_turn.jsonl
 ```
 
 Convert every JSONL file under `outputs/`, replacing any existing Markdown
@@ -277,7 +264,7 @@ already shown. Pass `--include-raw` to retain them as collapsible sections too.
 
 ## Model cache on RunPod
 
-`hello_qwen.py` chooses the cache in this order:
+`scripts/smoke_test/hello_qwen.py` chooses the cache in this order:
 
 1. `--cache-dir`, when provided;
 2. an existing `HF_HOME` environment variable;
@@ -289,7 +276,7 @@ already shown. Pass `--include-raw` to retain them as collapsible sections too.
 You can always choose the path explicitly:
 
 ```bash
-python3 hello_qwen.py \
+python3 -m scripts.smoke_test.hello_qwen \
   --cache-dir /workspace/.cache/huggingface
 ```
 
@@ -304,7 +291,7 @@ token in the shell without committing it:
 
 ```bash
 export HF_TOKEN="hf_..."
-python3 hello_qwen.py
+python3 -m scripts.smoke_test.hello_qwen
 ```
 
 `.env` files are ignored by Git, but this starter does not load them
@@ -350,7 +337,7 @@ Set the cache explicitly:
 
 ```bash
 export HF_HOME=/workspace/.cache/huggingface
-python3 hello_qwen.py
+python3 -m scripts.smoke_test.hello_qwen
 ```
 
 ## What is deliberately not included yet

@@ -31,7 +31,7 @@ from src.batch_qwen import (  # noqa: E402
     sample_progress,
     trim_generated_tokens,
 )
-from smoke_test.hello_qwen_reasoning import (  # noqa: E402
+from src.qwen_runtime import (  # noqa: E402
     DEFAULT_MODEL,
     DEFAULT_REASONING_END_MARKER,
     input_device_for,

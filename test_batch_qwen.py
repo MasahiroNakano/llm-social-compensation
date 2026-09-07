@@ -7,7 +7,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from batch_qwen import (
+from src.batch_qwen import (
     DEFAULT_PROMPTS,
     batch_ranges,
     build_requests,

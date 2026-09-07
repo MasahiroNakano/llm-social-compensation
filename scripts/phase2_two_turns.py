@@ -16,7 +16,7 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from smoke_test.hello_qwen_reasoning import (  # noqa: E402
+from src.qwen_runtime import (  # noqa: E402
     DEFAULT_MODEL,
     DEFAULT_REASONING_END_MARKER,
 )

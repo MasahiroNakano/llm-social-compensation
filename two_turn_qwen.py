@@ -21,7 +21,7 @@ from src.batch_qwen import (
     parse_tokens,
     trim_generated_tokens,
 )
-from smoke_test.hello_qwen_reasoning import (
+from src.qwen_runtime import (
     DEFAULT_REASONING_END_MARKER,
     input_device_for,
 )

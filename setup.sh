@@ -94,4 +94,4 @@ PY
 echo
 echo "Setup complete."
 echo "Next command:"
-echo "  $PYTHON_BIN hello_qwen.py"
+echo "  $PYTHON_BIN -m scripts.smoke_test.hello_qwen"

@@ -7,7 +7,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from two_turn_batch_qwen import (
+from src.two_turn_batch_qwen import (
     common_source_setting,
     expected_samples,
     followup_sample_id,
@@ -119,7 +119,7 @@ class TwoTurnBatchQwenTests(unittest.TestCase):
         )
 
     def test_common_setting_requires_consistency_without_override(self) -> None:
-        from two_turn_batch_qwen import SourceTurn
+        from src.two_turn_batch_qwen import SourceTurn
 
         left = SourceTurn(1, source_record("left", 1))
         right_record = source_record("right", 2)
@@ -137,7 +137,7 @@ class TwoTurnBatchQwenTests(unittest.TestCase):
         )
 
     def test_repeated_messages_preserves_role_order(self) -> None:
-        from two_turn_batch_qwen import SourceTurn
+        from src.two_turn_batch_qwen import SourceTurn
 
         turn = SourceTurn(1, source_record("sample", 1))
         batches = repeated_messages(
