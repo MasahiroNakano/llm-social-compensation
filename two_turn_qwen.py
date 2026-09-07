@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Sequence
 
-from batch_qwen import (
+from src.batch_qwen import (
     DEFAULT_PROMPTS,
     build_requests,
     eos_token_ids,
@@ -21,7 +21,10 @@ from batch_qwen import (
     parse_tokens,
     trim_generated_tokens,
 )
-from hello_qwen_reasoning import DEFAULT_REASONING_END_MARKER, input_device_for
+from smoke_test.hello_qwen_reasoning import (
+    DEFAULT_REASONING_END_MARKER,
+    input_device_for,
+)
 
 
 ROOT_DIR = Path(__file__).resolve().parent

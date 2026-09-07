@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterator, Sequence
 
-from hello_qwen_reasoning import (
+from smoke_test.hello_qwen_reasoning import (
     DEFAULT_MODEL,
     DEFAULT_REASONING_END_MARKER,
     choose_dtype,
@@ -25,7 +25,7 @@ from hello_qwen_reasoning import (
 )
 
 
-ROOT_DIR = Path(__file__).resolve().parent
+ROOT_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_PROMPTS = ROOT_DIR / "prompts" / "criticism_baseline.json"
 
 
@@ -237,6 +237,49 @@ def output_path(requested: Path | None, *, resume: bool) -> Path:
     return path
 
 
+def repair_incomplete_jsonl_tail(path: Path) -> str | None:
+    """Repair only an unterminated final JSONL record after an abrupt stop."""
+
+    with path.open("rb+") as output_file:
+        output_file.seek(0, os.SEEK_END)
+        file_size = output_file.tell()
+        if file_size == 0:
+            return None
+
+        output_file.seek(file_size - 1)
+        if output_file.read(1) == b"\n":
+            return None
+
+        line_start = 0
+        scan_end = file_size
+        chunk_size = 64 * 1024
+        while scan_end > 0:
+            scan_start = max(0, scan_end - chunk_size)
+            output_file.seek(scan_start)
+            chunk = output_file.read(scan_end - scan_start)
+            newline = chunk.rfind(b"\n")
+            if newline >= 0:
+                line_start = scan_start + newline + 1
+                break
+            scan_end = scan_start
+
+        output_file.seek(line_start)
+        final_line = output_file.read()
+        try:
+            json.loads(final_line.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            output_file.seek(line_start)
+            output_file.truncate()
+            return (
+                "Discarded an incomplete final JSONL record left by an "
+                "interrupted write."
+            )
+
+        output_file.seek(0, os.SEEK_END)
+        output_file.write(b"\n")
+        return "Added the missing newline after a complete final JSONL record."
+
+
 def sample_id(request: PromptRequest, sample_number: int) -> str:
     return f"{request.prompt_id}.{request.condition}.s{sample_number:02d}"
 
@@ -338,7 +381,7 @@ def stable_batch_seed(
 
 
 def load_runtime(args: argparse.Namespace) -> tuple[Any, Any, Any]:
-    """Load the same PyTorch/Transformers stack as batch-inference.py."""
+    """Load the shared PyTorch/Transformers stack for experiment runners."""
 
     cache_root = configure_cache(args.cache_dir)
     try:
@@ -533,6 +576,9 @@ def run(args: argparse.Namespace) -> int:
     try:
         destination = output_path(args.output, resume=args.resume)
         if args.resume:
+            repair_message = repair_incomplete_jsonl_tail(destination)
+            if repair_message:
+                print(f"Resume repair: {repair_message}")
             completed_ids, previous_batch_sizes = load_completed_samples(
                 destination,
                 expected=intended,

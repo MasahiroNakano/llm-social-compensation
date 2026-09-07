@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Run Phase 2 with fixed, verdict-only positive/negative L4_15 answers."""
+"""Run Phase 2 with fixed, verdict-only positive/negative L4_15 answers.
+This time the defauult temperature is 1.0
+"""
 
 from __future__ import annotations
 
@@ -13,7 +15,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Sequence
 
-from batch_qwen import (
+ROOT_DIR = Path(__file__).resolve().parent.parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from src.batch_qwen import (  # noqa: E402
     PromptRequest,
     batch_ranges,
     build_requests,
@@ -25,17 +31,16 @@ from batch_qwen import (
     sample_progress,
     trim_generated_tokens,
 )
-from hello_qwen_reasoning import (
+from smoke_test.hello_qwen_reasoning import (  # noqa: E402
     DEFAULT_MODEL,
     DEFAULT_REASONING_END_MARKER,
     input_device_for,
 )
-from two_turn_qwen import validate_generation_settings
+from two_turn_qwen import validate_generation_settings  # noqa: E402
 
 
-ROOT_DIR = Path(__file__).resolve().parent
 DEFAULT_PROMPTS = ROOT_DIR / "prompts" / "criticism_baseline_selection.json"
-DEFAULT_FOLLOWUP_PROMPT_IDS = ("L3_09", "L3_11", "B3", "B7")
+DEFAULT_FOLLOWUP_PROMPT_IDS = ("B3", "B7")
 FIRST_PROMPT_ID = "L4_15"
 INTERVENTION_VERSION = "l4_15_verdict_only_v1"
 
@@ -115,7 +120,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--system-prompt")
     parser.add_argument("--max-new-tokens", type=int, default=4096)
-    parser.add_argument("--temperature", type=float, default=0.7)
+    parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--top-p", type=float, default=0.95)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--cache-dir", type=Path)

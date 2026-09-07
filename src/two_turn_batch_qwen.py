@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Sequence
 
-from batch_qwen import (
+from src.batch_qwen import (
     batch_ranges,
     build_requests,
     eos_token_ids,
@@ -21,10 +21,14 @@ from batch_qwen import (
     load_prompt_set,
     load_runtime,
     parse_tokens,
+    repair_incomplete_jsonl_tail,
     sample_progress,
     trim_generated_tokens,
 )
-from hello_qwen_reasoning import DEFAULT_REASONING_END_MARKER, input_device_for
+from smoke_test.hello_qwen_reasoning import (
+    DEFAULT_REASONING_END_MARKER,
+    input_device_for,
+)
 from two_turn_qwen import (
     build_messages,
     validate_generation_settings,
@@ -32,7 +36,7 @@ from two_turn_qwen import (
 )
 
 
-ROOT_DIR = Path(__file__).resolve().parent
+ROOT_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_PROMPTS = ROOT_DIR / "prompts" / "criticism_baseline_selection.json"
 DEFAULT_SOURCE_JSONL = (
     ROOT_DIR
@@ -334,7 +338,13 @@ def repeated_messages(
     return [messages for _ in range(count)]
 
 
-def run(args: argparse.Namespace) -> int:
+def run(
+    args: argparse.Namespace,
+    *,
+    runtime: tuple[Any, Any, Any] | None = None,
+) -> int:
+    """Run one ordered prompt pair, optionally reusing an already loaded model."""
+
     script_started = time.perf_counter()
     try:
         validate_args(args)
@@ -445,6 +455,10 @@ def run(args: argparse.Namespace) -> int:
     )
     try:
         destination = output_path(args.output, resume=args.resume)
+        if args.resume:
+            repair_message = repair_incomplete_jsonl_tail(destination)
+            if repair_message:
+                print(f"Resume repair: {repair_message}")
         completed_ids = (
             load_completed_samples(
                 destination,
@@ -469,12 +483,19 @@ def run(args: argparse.Namespace) -> int:
     if args.resume:
         print(f"Resume found {len(completed_ids)}/{total_samples} completed samples.")
 
-    runtime_args = argparse.Namespace(cache_dir=args.cache_dir, model=model_name, seed=seed)
-    try:
-        torch, tokenizer, model = load_runtime(runtime_args)
-    except RuntimeError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        return 1
+    if runtime is None:
+        runtime_args = argparse.Namespace(
+            cache_dir=args.cache_dir,
+            model=model_name,
+            seed=seed,
+        )
+        try:
+            torch, tokenizer, model = load_runtime(runtime_args)
+        except RuntimeError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+    else:
+        torch, tokenizer, model = runtime
 
     generation_options = {
         "do_sample": True,
