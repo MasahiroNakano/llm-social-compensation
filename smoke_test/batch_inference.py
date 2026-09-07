@@ -22,7 +22,7 @@ from io import StringIO
 from pathlib import Path
 from typing import Any, Sequence
 
-from hello_qwen_reasoning import (
+from smoke_test.hello_qwen_reasoning import (
     DEFAULT_MODEL,
     DEFAULT_PROMPT,
     DEFAULT_REASONING_END_MARKER,
