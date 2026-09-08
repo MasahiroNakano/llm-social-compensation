@@ -29,7 +29,7 @@ from src.qwen_runtime import (
     DEFAULT_REASONING_END_MARKER,
     input_device_for,
 )
-from two_turn_qwen import (
+from src.two_turn_utils import (
     build_messages,
     validate_generation_settings,
     validate_source_record,

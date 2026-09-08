@@ -36,7 +36,7 @@ from src.qwen_runtime import (  # noqa: E402
     DEFAULT_REASONING_END_MARKER,
     input_device_for,
 )
-from two_turn_qwen import validate_generation_settings  # noqa: E402
+from src.two_turn_utils import validate_generation_settings  # noqa: E402
 
 
 DEFAULT_PROMPTS = ROOT_DIR / "prompts" / "criticism_baseline_selection.json"
