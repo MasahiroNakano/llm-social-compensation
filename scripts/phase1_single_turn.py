@@ -18,7 +18,7 @@ from src.batch_qwen import run  # noqa: E402
 
 
 DEFAULT_PROMPTS = ROOT_DIR / "prompts" / "phase1_four_prompts.json"
-DEFAULT_OUTPUT = ROOT_DIR / "outputs" / "qwen35_phase1_single_turn.jsonl"
+DEFAULT_OUTPUT = ROOT_DIR / "outputs" / "qwen35_phase1_single_turn_8192.jsonl"
 
 
 def parse_args(argv: Sequence[str] | None = None):

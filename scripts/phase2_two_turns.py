@@ -29,8 +29,8 @@ from src.two_turn_batch_qwen import run as run_pair  # noqa: E402
 
 
 DEFAULT_PROMPTS = ROOT_DIR / "prompts" / "phase1_four_prompts.json"
-DEFAULT_SOURCE_JSONL = ROOT_DIR / "outputs" / "qwen35_phase1_single_turn.jsonl"
-DEFAULT_OUTPUT_DIR = ROOT_DIR / "outputs" / "phase2_two_turns_temperature_1"
+DEFAULT_SOURCE_JSONL = ROOT_DIR / "outputs" / "qwen35_phase1_single_turn_8192.jsonl"
+DEFAULT_OUTPUT_DIR = ROOT_DIR / "outputs" / "phase2_two_turns_temperature_1_8192"
 PROMPT_IDS = ("P1", "P2", "P3", "P4")
 ORDERED_PAIRS = tuple(
     (source, followup)
@@ -277,20 +277,7 @@ def run(args: argparse.Namespace) -> int:
 def main(argv: Sequence[str] | None = None) -> int:
     # Respect Slurm's allocation; otherwise make only the first GPU visible.
     os.environ.setdefault("CUDA_VISIBLE_DEVICES", "0")
-
-    rc = run(parse_args(argv))
-    if rc != 0:
-        return rc
-
-    print("Phase 2 complete. Launching phase 3...", flush=True)
-    import subprocess
-    subprocess.run(
-        [sys.executable, "scripts/phase3_experiment.py"],
-        check=True,
-    )
-
-    return 0
+    return run(parse_args(argv))
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
