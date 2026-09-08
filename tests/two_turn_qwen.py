@@ -25,6 +25,11 @@ from src.qwen_runtime import (
     DEFAULT_REASONING_END_MARKER,
     input_device_for,
 )
+from src.two_turn_utils import (
+    build_messages,
+    validate_generation_settings,
+    validate_source_record,
+)
 
 
 ROOT_DIR = Path(__file__).resolve().parent
@@ -105,15 +110,6 @@ def load_jsonl_row(path: Path, row_number: int) -> dict[str, Any]:
     raise ValueError(f"Source JSONL has fewer than {row_number} nonblank rows: {path}")
 
 
-def validate_source_record(record: dict[str, Any]) -> None:
-    for field in ("prompt", "response"):
-        if not isinstance(record.get(field), str) or not record[field].strip():
-            raise ValueError(f"Source row must contain a non-empty {field!r} string.")
-    config = record.get("generation_config")
-    if not isinstance(config, dict):
-        raise ValueError("Source row must contain a 'generation_config' object.")
-
-
 def source_setting(
     args: argparse.Namespace,
     source_config: dict[str, Any],
@@ -122,22 +118,6 @@ def source_setting(
 ) -> Any:
     override = getattr(args, name)
     return source_config.get(name, fallback) if override is None else override
-
-
-def build_messages(
-    *,
-    source_record: dict[str, Any],
-    followup_prompt: str,
-    system_prompt: str,
-) -> list[dict[str, str]]:
-    """Construct system, saved user/assistant, and new user messages."""
-
-    return [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": source_record["prompt"].strip()},
-        {"role": "assistant", "content": source_record["response"].strip()},
-        {"role": "user", "content": followup_prompt.strip()},
-    ]
 
 
 def output_path(requested: Path | None) -> Path:
@@ -152,23 +132,6 @@ def output_path(requested: Path | None) -> Path:
     if path.exists():
         raise FileExistsError(f"Refusing to overwrite existing output: {path}")
     return path
-
-
-def validate_generation_settings(
-    *,
-    max_new_tokens: int,
-    temperature: float,
-    top_p: float,
-    reasoning_end_marker: str,
-) -> None:
-    if max_new_tokens <= 0:
-        raise ValueError("--max-new-tokens must be greater than 0.")
-    if temperature <= 0:
-        raise ValueError("--temperature must be greater than 0 for sampling.")
-    if not 0 < top_p <= 1:
-        raise ValueError("--top-p must be in (0, 1].")
-    if not reasoning_end_marker:
-        raise ValueError("--reasoning-end-marker must not be empty.")
 
 
 def run(args: argparse.Namespace) -> int:

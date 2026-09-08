@@ -277,8 +277,20 @@ def run(args: argparse.Namespace) -> int:
 def main(argv: Sequence[str] | None = None) -> int:
     # Respect Slurm's allocation; otherwise make only the first GPU visible.
     os.environ.setdefault("CUDA_VISIBLE_DEVICES", "0")
-    return run(parse_args(argv))
 
+    rc = run(parse_args(argv))
+    if rc != 0:
+        return rc
+
+    print("Phase 2 complete. Launching phase 3...", flush=True)
+    import subprocess
+    subprocess.run(
+        [sys.executable, "scripts/phase3_experiment.py"],
+        check=True,
+    )
+
+    return 0
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
