@@ -20,7 +20,7 @@ from scripts.phase2_two_turns import run  # noqa: E402
 DEFAULT_OUTPUT_DIR = (
     ROOT_DIR
     / "outputs"
-    / "phase2_two_turns_disregard_first_question_temperature_1_8192_2"
+    / "phase2_two_turns_disregard_first_question"
 )
 Q2_PREFIX = (
     "Please disregard the first question and do not let it bias your answer "

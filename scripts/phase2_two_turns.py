@@ -29,8 +29,8 @@ from src.two_turn_batch_qwen import run as run_pair  # noqa: E402
 
 
 DEFAULT_PROMPTS = ROOT_DIR / "prompts" / "phase1_four_prompts.json"
-DEFAULT_SOURCE_JSONL = ROOT_DIR / "outputs" / "qwen35_phase1_single_turn_8192_2.jsonl"
-DEFAULT_OUTPUT_DIR = ROOT_DIR / "outputs" / "phase2_two_turns_temperature_1_8192_2"
+DEFAULT_SOURCE_JSONL = ROOT_DIR / "outputs" / "qwen35_phase1_single_turn.jsonl"
+DEFAULT_OUTPUT_DIR = ROOT_DIR / "outputs" / "phase2_two_turns_temperature_1"
 PROMPT_IDS = ("P1", "P2", "P3", "P4")
 ORDERED_PAIRS = tuple(
     (source, followup)
