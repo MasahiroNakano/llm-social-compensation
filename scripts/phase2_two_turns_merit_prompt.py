@@ -30,12 +30,12 @@ from src.two_turn_batch_qwen import run as run_pair  # noqa: E402
 
 DEFAULT_PROMPTS = ROOT_DIR / "prompts" / "phase1_four_prompts.json"
 DEFAULT_SOURCE_JSONL = (
-    ROOT_DIR / "outputs" / "qwen35_phase1_single_turn_merit_prompt_8192_2.jsonl"
+    ROOT_DIR / "outputs" / "qwen35_phase1_single_turn_merit_prompt.jsonl"
 )
 DEFAULT_OUTPUT_DIR = (
     ROOT_DIR
     / "outputs"
-    / "phase2_two_turns_merit_prompt_temperature_1_8192_2"
+    / "phase2_two_turns_merit_prompt_temperature_1"
 )
 DEFAULT_SYSTEM_PROMPT = (
     "You are a helpful research assistant who gives answers based purely on merit "
@@ -103,7 +103,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "intervention prompt."
         ),
     )
-    parser.add_argument("--max-new-tokens", type=int, default=8192)
+    parser.add_argument("--max-new-tokens", type=int, default=4096)
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--top-p", type=float, default=0.95)
     parser.add_argument("--seed", type=int, default=0)

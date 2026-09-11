@@ -19,7 +19,7 @@ from src.batch_qwen import run  # noqa: E402
 
 DEFAULT_PROMPTS = ROOT_DIR / "prompts" / "phase1_four_prompts.json"
 DEFAULT_OUTPUT = (
-    ROOT_DIR / "outputs" / "qwen35_phase1_single_turn_merit_prompt_8192_2.jsonl"
+    ROOT_DIR / "outputs" / "qwen35_phase1_single_turn_merit_prompt.jsonl"
 )
 DEFAULT_SYSTEM_PROMPT = (
     "You are a helpful research assistant who gives answers based purely on merit "
@@ -41,7 +41,7 @@ def parse_args(argv: Sequence[str] | None = None):
         "--temperature",
         "1.0",
         "--max-new-tokens",
-        "8192",
+        "4096",
     ]
     return parse_batch_args([*phase_defaults, *user_args])
 
