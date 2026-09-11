@@ -1,4 +1,4 @@
-"""Fast configuration tests for the resumable phase-one and phase-two runners."""
+"""Fast configuration tests for the three resumable experiment phases."""
 
 from __future__ import annotations
 
@@ -18,6 +18,20 @@ from scripts.phase2_two_turns import (
     parse_args as parse_phase2_args,
     run as run_phase2,
     selected_pairs,
+)
+from scripts.phase2_two_turns_prompt_control import (
+    DEFAULT_OUTPUT_DIR as PHASE2_CONTROL_OUTPUT_DIR,
+    Q2_PREFIX,
+    parse_args as parse_phase2_control_args,
+)
+from scripts.phase3_experiment import (
+    DEFAULT_FOLLOWUP_PROMPT_IDS as PHASE3_FOLLOWUPS,
+    DEFAULT_OUTPUT as PHASE3_OUTPUT,
+    DEFAULT_PROMPTS as PHASE3_PROMPTS,
+    FIRST_PROMPT_ID as PHASE3_FIRST_PROMPT,
+    build_experiment as build_phase3_experiment,
+    messages_for_cell as phase3_messages,
+    parse_args as parse_phase3_args,
 )
 from src.batch_qwen import load_prompt_set
 from src.batch_qwen import repair_incomplete_jsonl_tail
@@ -106,6 +120,13 @@ class PhaseTwoTests(unittest.TestCase):
         self.assertEqual(pair_args.temperature, 1.0)
         self.assertTrue(pair_args.resume)
 
+    def test_phase_two_prompt_control_has_separate_output_and_q2_prefix(self) -> None:
+        args = parse_phase2_control_args([])
+        pair_args = namespace_for_pair(args, ("P1", "P3"), resume=False)
+        self.assertEqual(args.output_dir, PHASE2_CONTROL_OUTPUT_DIR)
+        self.assertEqual(pair_args.followup_prefix, Q2_PREFIX)
+        self.assertNotEqual(args.output_dir, parse_phase2_args([]).output_dir)
+
     def test_sweep_resume_continues_partial_and_starts_missing_pairs(self) -> None:
         with TemporaryDirectory() as temporary_directory:
             output_dir = Path(temporary_directory)
@@ -147,6 +168,36 @@ class PhaseTwoTests(unittest.TestCase):
         self.assertTrue(
             all(call.kwargs["runtime"] is shared_runtime for call in actual_calls)
         )
+
+
+class PhaseThreeTests(unittest.TestCase):
+    def test_defaults_define_the_single_matched_a1_pair(self) -> None:
+        args = parse_phase3_args([])
+        self.assertEqual(args.temperature, 1.0)
+        self.assertEqual(args.prompts, PHASE3_PROMPTS)
+        self.assertEqual(args.output, PHASE3_OUTPUT)
+        self.assertEqual(PHASE3_FIRST_PROMPT, "P2")
+        self.assertEqual(PHASE3_FOLLOWUPS, ("P3", "P4"))
+
+    def test_each_phase_three_conversation_contains_exactly_one_a1(self) -> None:
+        prompt_set = load_prompt_set(PHASE3_PROMPTS)
+        first_request, cells = build_phase3_experiment(
+            prompt_set,
+            followup_prompt_ids=PHASE3_FOLLOWUPS,
+            verdict_conditions=("positive", "negative"),
+        )
+        self.assertEqual(len(cells), 4)
+        for cell in cells:
+            messages = phase3_messages(
+                cell,
+                first_request=first_request,
+                system_prompt=prompt_set["system_prompt"],
+            )
+            self.assertEqual(
+                [message["role"] for message in messages],
+                ["system", "user", "assistant", "user"],
+            )
+            self.assertEqual(messages[2]["content"], cell.first_answer)
 
 
 if __name__ == "__main__":

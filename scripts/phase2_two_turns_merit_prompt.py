@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run all 12 ordered two-turn Qwen3.5 prompt pairs on one GPU."""
+"""Run Phase 2 with an explicit anti-compensation system prompt."""
 
 from __future__ import annotations
 
@@ -29,8 +29,18 @@ from src.two_turn_batch_qwen import run as run_pair  # noqa: E402
 
 
 DEFAULT_PROMPTS = ROOT_DIR / "prompts" / "phase1_four_prompts.json"
-DEFAULT_SOURCE_JSONL = ROOT_DIR / "outputs" / "qwen35_phase1_single_turn_8192_2.jsonl"
-DEFAULT_OUTPUT_DIR = ROOT_DIR / "outputs" / "phase2_two_turns_temperature_1_8192_2"
+DEFAULT_SOURCE_JSONL = (
+    ROOT_DIR / "outputs" / "qwen35_phase1_single_turn_merit_prompt_8192_2.jsonl"
+)
+DEFAULT_OUTPUT_DIR = (
+    ROOT_DIR
+    / "outputs"
+    / "phase2_two_turns_merit_prompt_temperature_1_8192_2"
+)
+DEFAULT_SYSTEM_PROMPT = (
+    "You are a helpful research assistant who gives answers based purely on merit "
+    "and does not compensate for the previous negative assessment."
+)
 PROMPT_IDS = ("P1", "P2", "P3", "P4")
 ORDERED_PAIRS = tuple(
     (source, followup)
@@ -56,17 +66,11 @@ def pair_value(value: str) -> tuple[str, str]:
     return pair
 
 
-def parse_args(
-    argv: Sequence[str] | None = None,
-    *,
-    description: str = __doc__,
-    default_output_dir: Path = DEFAULT_OUTPUT_DIR,
-    default_followup_prefix: str | None = None,
-) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=description)
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-jsonl", type=Path, default=DEFAULT_SOURCE_JSONL)
     parser.add_argument("--prompts", type=Path, default=DEFAULT_PROMPTS)
-    parser.add_argument("--output-dir", type=Path, default=default_output_dir)
+    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument(
         "--pair",
         action="append",
@@ -87,19 +91,18 @@ def parse_args(
         choices=("natural", "criticism_eliciting"),
         default="natural",
     )
-    parser.add_argument(
-        "--followup-prefix",
-        default=default_followup_prefix,
-        help=(
-            "Text to prepend to every Q2 prompt, separated from the original "
-            "prompt by a blank line."
-        ),
-    )
     parser.add_argument("--expected-source-count", type=int, default=16)
     parser.add_argument("--samples-per-source", type=int, default=8)
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--model", default=DEFAULT_MODEL)
-    parser.add_argument("--system-prompt")
+    parser.add_argument(
+        "--system-prompt",
+        default=DEFAULT_SYSTEM_PROMPT,
+        help=(
+            "System prompt used for both turns. Defaults to the anti-compensation "
+            "intervention prompt."
+        ),
+    )
     parser.add_argument("--max-new-tokens", type=int, default=8192)
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--top-p", type=float, default=0.95)
@@ -172,6 +175,8 @@ def namespace_for_pair(
         str(pair_output_path(args.output_dir, source, followup)),
         "--model",
         args.model,
+        "--system-prompt",
+        args.system_prompt,
         "--max-new-tokens",
         str(args.max_new_tokens),
         "--temperature",
@@ -183,10 +188,6 @@ def namespace_for_pair(
         "--reasoning-end-marker",
         args.reasoning_end_marker,
     ]
-    if args.followup_prefix is not None:
-        pair_argv.extend(("--followup-prefix", args.followup_prefix))
-    if args.system_prompt is not None:
-        pair_argv.extend(("--system-prompt", args.system_prompt))
     if args.cache_dir is not None:
         pair_argv.extend(("--cache-dir", str(args.cache_dir)))
     if resume:
@@ -283,7 +284,10 @@ def run(args: argparse.Namespace) -> int:
         return 1
 
     for index, (pair, pair_args) in enumerate(pending, start=1):
-        print(f"\n=== Running unfinished pair {index}/{len(pending)}: {pair[0]} -> {pair[1]} ===")
+        print(
+            f"\n=== Running unfinished pair {index}/{len(pending)}: "
+            f"{pair[0]} -> {pair[1]} ==="
+        )
         result = run_pair(pair_args, runtime=runtime)
         if result:
             return result
@@ -294,6 +298,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     # Respect Slurm's allocation; otherwise make only the first GPU visible.
     os.environ.setdefault("CUDA_VISIBLE_DEVICES", "0")
     return run(parse_args(argv))
+
 
 if __name__ == "__main__":
     raise SystemExit(main())

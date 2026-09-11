@@ -8,7 +8,7 @@ import hashlib
 import json
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Sequence
@@ -74,6 +74,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--followup-condition",
         choices=("natural", "criticism_eliciting"),
         default="natural",
+    )
+    parser.add_argument(
+        "--followup-prefix",
+        help=(
+            "Text to prepend to the second-turn prompt, separated from the "
+            "original prompt by a blank line."
+        ),
     )
     parser.add_argument(
         "--samples-per-source",
@@ -338,6 +345,17 @@ def repeated_messages(
     return [messages for _ in range(count)]
 
 
+def prefix_followup_prompt(prompt: str, prefix: str | None) -> str:
+    """Prepend an optional control instruction to a follow-up prompt."""
+
+    if prefix is None:
+        return prompt
+    cleaned_prefix = prefix.strip()
+    if not cleaned_prefix:
+        raise ValueError("--followup-prefix must not be blank.")
+    return f"{cleaned_prefix}\n\n{prompt.strip()}"
+
+
 def run(
     args: argparse.Namespace,
     *,
@@ -362,6 +380,10 @@ def run(
             condition=args.followup_condition,
             prompt_ids={args.followup_prompt_id},
         )[0]
+        followup = replace(
+            followup,
+            prompt=prefix_followup_prompt(followup.prompt, args.followup_prefix),
+        )
         model_name = common_source_setting(
             source_turns, name="model", override=args.model,
             fallback="Qwen/Qwen3.5-4B",
@@ -440,6 +462,8 @@ def run(
         "source_jsonl_sha256": source_hash,
         "prompt_file_sha256": prompt_hash,
     }
+    if args.followup_prefix is not None:
+        required_config["followup_prompt_prefix"] = args.followup_prefix.strip()
     generation_config = {
         **required_config,
         "source_jsonl": str(source_path),

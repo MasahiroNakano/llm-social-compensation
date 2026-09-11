@@ -13,6 +13,7 @@ from src.two_turn_batch_qwen import (
     followup_sample_id,
     load_source_turns,
     output_path,
+    prefix_followup_prompt,
     repeated_messages,
     stable_batch_seed,
 )
@@ -151,6 +152,17 @@ class TwoTurnBatchQwenTests(unittest.TestCase):
             [message["role"] for message in batches[0]],
             ["system", "user", "assistant", "user"],
         )
+
+    def test_followup_prefix_is_added_at_the_head_of_q2(self) -> None:
+        prompt = prefix_followup_prompt(
+            "original Q2",
+            "  Please disregard Q1.  ",
+        )
+        self.assertEqual(prompt, "Please disregard Q1.\n\noriginal Q2")
+
+    def test_blank_followup_prefix_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "must not be blank"):
+            prefix_followup_prompt("original Q2", "   ")
 
     def test_stable_seed_depends_on_source_and_batch(self) -> None:
         args = (0, "source-a", "L3_09", "natural")

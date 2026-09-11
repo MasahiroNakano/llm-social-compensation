@@ -11,13 +11,13 @@ For SLURM environment, see ~/using transformer in slurm.sh
 
 # LLM Safety & Interpretability Experiments
 
-A resumable two-phase Qwen3.5 4B experiment for measuring how a model's previous
-recommendation affects its evaluation of a second proposal. Both phases use
+A resumable three-phase Qwen3.5 4B experiment for measuring how a model's previous
+recommendation affects its evaluation of a second proposal. All phases use
 temperature 1.0 and are designed to run sequentially on one GPU.
 
 The original social-compensation research plan is preserved in
 [`PROJECT_PLAN.md`](PROJECT_PLAN.md); the current runnable experiment is defined
-by the two phase scripts and `prompts/phase1_four_prompts.json`.
+by the three phase scripts and `prompts/phase1_four_prompts.json`.
 
 ## Repository contents
 
@@ -31,10 +31,12 @@ by the two phase scripts and `prompts/phase1_four_prompts.json`.
 │   └── phase1_four_prompts.json
 ├── requirements.txt
 ├── scripts/
-│   ├── matched_verdict_phase2_qwen.py
-│   ├── matched_verdict_phase2_qwen_exp2.py
+│   ├── hpc/
+│   │   └── all_phases.sbatch
 │   ├── phase1_single_turn.py
 │   ├── phase2_two_turns.py
+│   ├── phase2_two_turns_prompt_control.py
+│   ├── phase3_experiment.py
 │   └── smoke_test/
 │       ├── batch_inference.py
 │       ├── chat_qwen.py
@@ -60,6 +62,10 @@ by the two phase scripts and `prompts/phase1_four_prompts.json`.
 - `scripts/phase1_single_turn.py` samples the four proposals 16 times each.
 - `scripts/phase2_two_turns.py` runs all 12 ordered pairs, sampling eight
   second-turn responses after each saved first-turn response.
+- `scripts/phase2_two_turns_prompt_control.py` repeats Phase 2 with an instruction
+  at the head of Q2 asking the model to disregard Q1 and not let it bias Q2.
+- `scripts/phase3_experiment.py` compares one fixed matched P2 answer pair
+  (A1+ and A1-) before the P3 and P4 follow-up prompts.
 - `src/batch_qwen.py` and `src/two_turn_batch_qwen.py` are the canonical engines
   behind the two phase runners.
 - `jsonl_to_markdown.py` converts batch JSONL results into readable Markdown,
@@ -230,18 +236,46 @@ once and creates one JSONL file per pair under
 python3 scripts/phase2_two_turns.py
 ```
 
-If either process is interrupted, rerun that phase with `--resume`:
+Run the prompting control over the same Phase 1 responses and 12 directed pairs:
+
+```bash
+python3 scripts/phase2_two_turns_prompt_control.py
+```
+
+Its outputs are kept separate under
+`outputs/phase2_two_turns_disregard_first_question_temperature_1_8192_2/`.
+
+Phase 3 uses the same P2 assessment with either a positive verdict (A1+) or a
+negative verdict (A1-), then samples responses to P3 and P4. With 16 samples
+for each of the four verdict-by-follow-up cells, it produces 64 records in
+`outputs/qwen35_phase3_matched.jsonl`.
+
+```bash
+python3 scripts/phase3_experiment.py
+```
+
+If a process is interrupted, rerun that phase with `--resume`:
 
 ```bash
 python3 scripts/phase1_single_turn.py --resume
 python3 scripts/phase2_two_turns.py --resume
+python3 scripts/phase2_two_turns_prompt_control.py --resume
+python3 scripts/phase3_experiment.py --resume
 ```
 
 Resume mode validates existing records, appends only missing sample IDs, and
 repairs an incomplete final JSONL line left by abrupt job termination. Use
-`--batch-size 4` if the default batch size of 8 exceeds GPU memory. Both scripts
-also support `--dry-run`; phase 2 additionally supports repeatable selectors
-such as `--pair P1:P2`.
+`--batch-size 4` if the default batch size of 8 exceeds GPU memory. All three
+scripts support `--dry-run`; phase 2 additionally supports repeatable selectors
+such as `--pair P1:P2`, while phase 3 supports repeatable
+`--followup-prompt-id` selectors.
+
+On the configured Slurm cluster, the supplied job runs all three phases in
+order and resumes any outputs already present:
+
+```bash
+sbatch scripts/hpc/all_phases.sbatch
+```
 
 ## Convert batch output to Markdown
 

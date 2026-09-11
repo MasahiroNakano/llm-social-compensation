@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the merged single-turn Qwen3.5 experiment at temperature 1.0."""
+"""Run Phase 1 with an explicit anti-compensation system prompt."""
 
 from __future__ import annotations
 
@@ -18,11 +18,17 @@ from src.batch_qwen import run  # noqa: E402
 
 
 DEFAULT_PROMPTS = ROOT_DIR / "prompts" / "phase1_four_prompts.json"
-DEFAULT_OUTPUT = ROOT_DIR / "outputs" / "qwen35_phase1_single_turn_8192_2.jsonl"
+DEFAULT_OUTPUT = (
+    ROOT_DIR / "outputs" / "qwen35_phase1_single_turn_merit_prompt_8192_2.jsonl"
+)
+DEFAULT_SYSTEM_PROMPT = (
+    "You are a helpful research assistant who gives answers based purely on merit "
+    "and does not compensate for the previous negative assessment."
+)
 
 
 def parse_args(argv: Sequence[str] | None = None):
-    """Apply the phase-one defaults while retaining all batch-runner options."""
+    """Apply the intervention defaults while retaining all batch-runner options."""
 
     user_args = list(sys.argv[1:] if argv is None else argv)
     phase_defaults = [
@@ -30,6 +36,8 @@ def parse_args(argv: Sequence[str] | None = None):
         str(DEFAULT_PROMPTS),
         "--output",
         str(DEFAULT_OUTPUT),
+        "--system-prompt",
+        DEFAULT_SYSTEM_PROMPT,
         "--temperature",
         "1.0",
         "--max-new-tokens",
