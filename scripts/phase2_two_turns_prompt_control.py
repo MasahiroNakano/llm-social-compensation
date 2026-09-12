@@ -20,8 +20,9 @@ from scripts.phase2_two_turns import run  # noqa: E402
 DEFAULT_OUTPUT_DIR = (
     ROOT_DIR
     / "outputs"
-    / "phase2_two_turns_disregard_first_question"
+    / "phase2_two_turns_disregard_first_question_4096"
 )
+DEFAULT_MAX_NEW_TOKENS = 4096
 Q2_PREFIX = (
     "Please disregard the first question and do not let it bias your answer "
     "to the next question."
@@ -34,6 +35,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         description=__doc__,
         default_output_dir=DEFAULT_OUTPUT_DIR,
         default_followup_prefix=Q2_PREFIX,
+        default_max_new_tokens=DEFAULT_MAX_NEW_TOKENS,
     )
 
 

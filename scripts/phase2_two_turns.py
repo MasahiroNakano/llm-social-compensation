@@ -62,6 +62,7 @@ def parse_args(
     description: str = __doc__,
     default_output_dir: Path = DEFAULT_OUTPUT_DIR,
     default_followup_prefix: str | None = None,
+    default_max_new_tokens: int = 8192,
 ) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument("--source-jsonl", type=Path, default=DEFAULT_SOURCE_JSONL)
@@ -100,7 +101,11 @@ def parse_args(
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--system-prompt")
-    parser.add_argument("--max-new-tokens", type=int, default=8192)
+    parser.add_argument(
+        "--max-new-tokens",
+        type=int,
+        default=default_max_new_tokens,
+    )
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--top-p", type=float, default=0.95)
     parser.add_argument("--seed", type=int, default=0)

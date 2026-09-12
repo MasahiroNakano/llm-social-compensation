@@ -20,6 +20,7 @@ from scripts.phase2_two_turns import (
     selected_pairs,
 )
 from scripts.phase2_two_turns_prompt_control import (
+    DEFAULT_MAX_NEW_TOKENS as PHASE2_CONTROL_MAX_NEW_TOKENS,
     DEFAULT_OUTPUT_DIR as PHASE2_CONTROL_OUTPUT_DIR,
     Q2_PREFIX,
     parse_args as parse_phase2_control_args,
@@ -124,7 +125,10 @@ class PhaseTwoTests(unittest.TestCase):
         args = parse_phase2_control_args([])
         pair_args = namespace_for_pair(args, ("P1", "P3"), resume=False)
         self.assertEqual(args.output_dir, PHASE2_CONTROL_OUTPUT_DIR)
+        self.assertEqual(args.max_new_tokens, PHASE2_CONTROL_MAX_NEW_TOKENS)
+        self.assertEqual(args.max_new_tokens, 4096)
         self.assertEqual(pair_args.followup_prefix, Q2_PREFIX)
+        self.assertEqual(pair_args.max_new_tokens, 4096)
         self.assertNotEqual(args.output_dir, parse_phase2_args([]).output_dir)
 
     def test_sweep_resume_continues_partial_and_starts_missing_pairs(self) -> None:
